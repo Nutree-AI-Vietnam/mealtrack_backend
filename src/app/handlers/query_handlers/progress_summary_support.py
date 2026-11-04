@@ -18,6 +18,18 @@ from src.domain.utils.timezone_utils import (
 logger = logging.getLogger(__name__)
 
 
+def local_days_utc_bounds(
+    start: date, end: date, user_tz_str: str
+) -> tuple[datetime, datetime]:
+    """UTC instants for local midnight of ``start`` and of the day after ``end``."""
+    tz = get_zone_info(user_tz_str)
+    start_utc = datetime.combine(start, datetime.min.time(), tzinfo=tz).astimezone(UTC)
+    end_utc = (
+        datetime.combine(end, datetime.min.time(), tzinfo=tz) + timedelta(days=1)
+    ).astimezone(UTC)
+    return start_utc, end_utc
+
+
 async def fetch_movement_by_day(
     uow: Any,
     user_id: str,
@@ -26,11 +38,7 @@ async def fetch_movement_by_day(
     user_tz_str: str,
     user_tz: Any,
 ) -> dict[date, float]:
-    tz = get_zone_info(user_tz_str)
-    start_utc = datetime.combine(start, datetime.min.time(), tzinfo=tz).astimezone(UTC)
-    end_utc = (
-        datetime.combine(end, datetime.min.time(), tzinfo=tz) + timedelta(days=1)
-    ).astimezone(UTC)
+    start_utc, end_utc = local_days_utc_bounds(start, end, user_tz_str)
     included = await uow.movement_entries.fetch_included_kcal_for_range(
         user_id, start_utc, end_utc
     )
@@ -54,6 +62,8 @@ async def resolve_today_live_target(
     base_cal: float,
     protein_t: float,
     bmr: float,
+    *,
+    activity_calories: bool = True,
 ) -> float | None:
     if today < start or today > end:
         return None
@@ -77,6 +87,7 @@ async def resolve_today_live_target(
         bmr=bmr,
         user_timezone=user_tz_str,
         auto_adjust=auto_adjust,
+        activity_calories=activity_calories,
     )
     return effective.adjusted.calories
 
@@ -156,6 +167,9 @@ async def read_summary_cache(
     end: date,
     revision: int | None,
     auto_adjust: bool = True,
+    *,
+    include_trends: bool = False,
+    activity_calories: bool = True,
 ) -> tuple[dict[str, Any] | None, int | None]:
     """Return the cached summary when still current, and the intake revision.
 
@@ -164,7 +178,7 @@ async def read_summary_cache(
     """
     if cache is None:
         return None, None
-    key, _ = CacheKeys.progress_summary(user_id, start, end)
+    key, _ = CacheKeys.progress_summary(user_id, start, end, include_trends)
     cached, intake_revision = await cache.get_json_with_revision(
         key, CacheKeys.intake_revision(user_id)[0]
     )
@@ -178,6 +192,10 @@ async def read_summary_cache(
             cached.get("weekly_auto_adjust", True)
         )
         == auto_adjust
+        and WeeklyBudgetService.activity_calories_enabled(
+            cached.get("activity_calories", True)
+        )
+        == activity_calories
     ):
         return cached, intake_revision
     return None, intake_revision
@@ -190,10 +208,12 @@ async def write_summary_cache(
     end: date,
     payload: dict[str, Any],
     intake_revision: int | None = None,
+    *,
+    include_trends: bool = False,
 ) -> None:
     if cache is None or intake_revision is None:
         return
-    key, ttl = CacheKeys.progress_summary(user_id, start, end)
+    key, ttl = CacheKeys.progress_summary(user_id, start, end, include_trends)
     await cache.set_json(
         key,
         {**payload, "intake_revision": intake_revision},

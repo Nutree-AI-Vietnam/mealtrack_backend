@@ -193,6 +193,44 @@ def build_movement_invalidation_operations(
     return operations
 
 
+def build_supplement_invalidation_operations(
+    user_id: str, log_date: date
+) -> list[dict[str, str]]:
+    """Build cache invalidation operations after a supplement dose write.
+
+    A dose adds vitamins and minerals, a feed row and a logged day, never
+    calories, so the weekly budget keys stay.
+    """
+    return [
+        *_expand_language_pattern(f"user:{user_id}:activities:{log_date.isoformat()}:"),
+        {
+            "op": DELETE_KEY,
+            "key": CacheKeys.daily_macros(user_id, log_date)[0],
+        },
+        _intake_revision_bump(user_id),
+        {
+            "op": DELETE_KEY,
+            "key": CacheKeys.user_streak(user_id)[0],
+        },
+    ]
+
+
+def build_activity_calories_invalidation_operations(
+    user_id: str, today: date
+) -> list[dict[str, str]]:
+    """Build cache invalidation operations after the activity calories switch.
+
+    The switch changes every day's totals. Day macros, weekly budgets read in
+    a session and progress summaries compare the flag they were built with.
+    This week's budget keys, which can be served before the flag is read, are
+    deleted, and the intake revision bump fences the range caches.
+    """
+    return [
+        *_weekly_budget_deletes(user_id, _week_start(today)),
+        _intake_revision_bump(user_id),
+    ]
+
+
 def build_profile_invalidation_operations(user_id: str) -> list[dict[str, str]]:
     """Build cache invalidation operations after a user profile or targets write."""
     return [

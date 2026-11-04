@@ -11,6 +11,8 @@ from src.app.handlers.query_handlers.get_progress_summary_query_handler import (
 )
 from src.app.queries.progress.get_progress_summary_query import GetProgressSummaryQuery
 from src.domain.model.meal import Meal, MealStatus
+from src.domain.model.meal_projection import MealProjection
+from src.domain.model.movement import MovementEntry
 from src.domain.model.nutrition import Nutrition
 from src.domain.model.nutrition.macros import Macros
 from src.domain.services.progress_summary_window import PROGRESS_SUMMARY_CAP_DAYS
@@ -63,9 +65,7 @@ def _uow(
     uow.users.get_profile = AsyncMock(return_value=profile)
     uow.users.get_weekly_auto_adjust = AsyncMock(return_value=True)
     uow.meals.find_by_date_range = AsyncMock(return_value=meals or [])
-    uow.hydration_entries.sum_ml_by_date_range = AsyncMock(
-        return_value=hydration or {}
-    )
+    uow.hydration_entries.sum_ml_by_date_range = AsyncMock(return_value=hydration or {})
     uow.hydration_entries.sum_macros_by_date_range = AsyncMock(return_value={})
     uow.hydration_entries.sum_micros_by_date_range = AsyncMock(return_value={})
     uow.movement_entries.fetch_included_kcal_for_range = AsyncMock(
@@ -300,6 +300,67 @@ async def test_summary_cached_before_a_meal_write_is_recomputed():
 
 
 @pytest.mark.asyncio
+async def test_tdee_checkout_does_not_overlap_the_summary_session():
+    """TDEE opens its own session. The summary session must already be closed."""
+    uow = _uow()
+    open_sessions = 0
+    open_during_tdee: int | None = None
+
+    async def enter():
+        nonlocal open_sessions
+        open_sessions += 1
+        return uow
+
+    async def exit_uow(*_args):
+        nonlocal open_sessions
+        open_sessions -= 1
+        return False
+
+    uow.__aenter__ = AsyncMock(side_effect=enter)
+    uow.__aexit__ = AsyncMock(side_effect=exit_uow)
+
+    async def load_targets(_user_id, _cache):
+        nonlocal open_during_tdee
+        open_during_tdee = open_sessions
+        return _targets()
+
+    handler = GetProgressSummaryQueryHandler()
+    with (
+        patch(
+            "src.app.handlers.query_handlers.get_progress_summary_query_handler.AsyncUnitOfWork",
+            return_value=uow,
+        ),
+        patch(
+            "src.app.handlers.query_handlers.get_progress_summary_query_handler.resolve_user_timezone_async",
+            new=AsyncMock(return_value="UTC"),
+        ),
+        patch(
+            "src.app.handlers.query_handlers.get_progress_summary_query_handler.datetime"
+        ) as mock_dt,
+        patch(
+            "src.app.handlers.query_handlers.get_progress_summary_query_handler.load_tdee_targets",
+            new=AsyncMock(side_effect=load_targets),
+        ),
+        patch(
+            "src.app.handlers.query_handlers.get_progress_summary_query_handler.resolve_today_live_target",
+            new=AsyncMock(return_value=1850.0),
+        ),
+    ):
+        mock_dt.now.return_value = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+        await handler.handle(
+            GetProgressSummaryQuery(
+                user_id=USER_ID,
+                start_date=date(2026, 9, 1),
+                end_date=date(2026, 9, 1),
+            )
+        )
+
+    assert open_during_tdee == 0
+    assert uow.__aenter__.await_count >= 2
+    assert open_sessions == 0
+
+
+@pytest.mark.asyncio
 async def test_another_user_id_is_passed_to_all_repos():
     other = "33333333-3333-3333-3333-333333333333"
     uow = _uow()
@@ -314,3 +375,281 @@ async def test_another_user_id_is_passed_to_all_repos():
     uow.users.find_by_id.assert_awaited_once_with(UUID(other))
     assert uow.meals.find_by_date_range.await_args.args[0] == other
     assert uow.daily_target_snapshots.find_calories_by_range.await_args.args[0] == other
+
+
+def _run(day: date, minutes: int, included: bool):
+    return MovementEntry(
+        user_id=USER_ID,
+        activity_name="Running",
+        duration_min=minutes,
+        kcal_burned=200.0,
+        intensity="moderate",
+        logged_at=datetime(day.year, day.month, day.day, 6, 0, tzinfo=UTC),
+        activity_id="running",
+        include_in_balance=included,
+    )
+
+
+@pytest.mark.asyncio
+async def test_trends_loads_food_items_and_movement_once_and_adds_goals():
+    start, end = date(2026, 8, 26), date(2026, 9, 1)
+    uow = _uow(meals=[_meal(start, 10.0)])
+    uow.movement_entries.find_by_user_and_logged_range = AsyncMock(
+        return_value=[_run(start, 30, True), _run(start, 20, False)]
+    )
+    cache = MagicMock()
+    cache.get_json_with_revision = AsyncMock(return_value=(None, 7))
+    cache.set_json = AsyncMock()
+
+    result = await _handle(
+        uow,
+        GetProgressSummaryQuery(
+            user_id=USER_ID, start_date=start, end_date=end, include_trends=True
+        ),
+        cache=cache,
+    )
+
+    kwargs = uow.meals.find_by_date_range.await_args.kwargs
+    assert kwargs["projection"] is MealProjection.MACROS_WITH_MICROS
+    uow.movement_entries.find_by_user_and_logged_range.assert_awaited_once()
+    uow.movement_entries.fetch_included_kcal_for_range.assert_not_awaited()
+    first = result["days"][0]
+    assert first["burned_calories"] == 200.0
+    assert first["movement_sessions"] == 2
+    assert first["movement_load"] == 100.0
+    assert result["days"][1]["movement_sessions"] == 0
+    assert result["goals_revision"] == 3
+    assert result["micro_goals"]["iron"] == 17.4
+    assert result["micro_goals"]["saturated_fat"] == 22.2
+    assert result["micro_upper_limits"]["iron"]["value"] == 45.0
+    key = cache.set_json.await_args.args[0]
+    assert key.endswith(":trends")
+
+
+@pytest.mark.asyncio
+async def test_default_summary_keeps_its_query_shape_and_cache_key():
+    start, end = date(2026, 8, 26), date(2026, 9, 1)
+    uow = _uow(
+        meals=[_meal(start, 10.0)],
+        movement=[(datetime(2026, 8, 26, 6, tzinfo=UTC), 120.0)],
+    )
+    uow.movement_entries.find_by_user_and_logged_range = AsyncMock(return_value=[])
+    cache = MagicMock()
+    cache.get_json_with_revision = AsyncMock(return_value=(None, 7))
+    cache.set_json = AsyncMock()
+
+    result = await _handle(
+        uow,
+        GetProgressSummaryQuery(user_id=USER_ID, start_date=start, end_date=end),
+        cache=cache,
+    )
+
+    kwargs = uow.meals.find_by_date_range.await_args.kwargs
+    assert kwargs["projection"] is MealProjection.MACROS_ONLY
+    uow.movement_entries.find_by_user_and_logged_range.assert_not_awaited()
+    assert result["days"][0]["burned_calories"] == 120.0
+    assert "micro_goals" not in result
+    assert "goals_revision" not in result
+    assert "micros" not in result["days"][0]
+    assert "movement_load" not in result["days"][0]
+    key = cache.set_json.await_args.args[0]
+    assert key == f"user:{USER_ID}:progress_summary:2026-08-26:2026-09-01"
+
+
+@pytest.mark.asyncio
+async def test_trends_days_add_supplement_doses_and_their_parts():
+    from types import SimpleNamespace
+
+    from src.domain.model.supplement import SupplementIntake, SupplementNutrients
+
+    start, end = date(2026, 8, 26), date(2026, 9, 1)
+
+    def dose(amounts, *, estimated=False, preformed=None):
+        return SupplementIntake(
+            id=f"i{len(amounts)}{estimated}",
+            user_id=USER_ID,
+            product_id="p",
+            units=1,
+            taken_at=datetime(2026, 8, 26, 1, tzinfo=UTC),
+            local_date=start,
+            logged_on_day=True,
+            nutrients=SupplementNutrients(amounts, vitamin_a_preformed=preformed),
+            estimated=estimated,
+        )
+
+    uow = _uow(meals=[_meal(start, 10.0)])
+    uow.movement_entries.find_by_user_and_logged_range = AsyncMock(return_value=[])
+    uow.supplements = SimpleNamespace(
+        schema_ready=AsyncMock(return_value=True),
+        intakes_between=AsyncMock(
+            return_value=[
+                dose({"vitamin_d": 25.0, "vitamin_a": 900.0}, preformed=900.0),
+                dose({"zinc": 5.0}, estimated=True),
+            ]
+        ),
+    )
+
+    result = await _handle(
+        uow,
+        GetProgressSummaryQuery(
+            user_id=USER_ID, start_date=start, end_date=end, include_trends=True
+        ),
+    )
+
+    uow.supplements.intakes_between.assert_awaited_once_with(USER_ID, start, end)
+    first, second = result["days"][0], result["days"][1]
+    assert first["micros"]["vitamin_d"] == 25.0
+    assert first["supplement_micros"] == {
+        "vitamin_a": 900.0,
+        "vitamin_d": 25.0,
+        "zinc": 5.0,
+    }
+    assert first["supplement_estimated_micros"] == {"zinc": 5.0}
+    assert first["supplement_vitamin_a_preformed"] == 900.0
+    assert first["supplement_doses"] == 2
+    assert "vitamin_d" not in first["micro_meal_counts"]
+    assert first["calories"] == pytest.approx(10 * 4 + 10 * 4 + 5 * 9, rel=0.01)
+    assert second["supplement_doses"] == 0 and second["supplement_micros"] == {}
+
+
+@pytest.mark.asyncio
+async def test_default_summary_highlights_count_doses_like_home():
+    from types import SimpleNamespace
+
+    from src.domain.model.supplement import SupplementIntake, SupplementNutrients
+
+    start, end = date(2026, 8, 26), date(2026, 9, 1)
+    iron = SupplementIntake(
+        id="i1",
+        user_id=USER_ID,
+        product_id="p",
+        units=1,
+        taken_at=datetime(2026, 8, 26, 1, tzinfo=UTC),
+        local_date=start,
+        logged_on_day=True,
+        nutrients=SupplementNutrients({"iron": 18.0}),
+    )
+    uow = _uow(meals=[_meal(start, 10.0)])
+    uow.supplements = SimpleNamespace(
+        schema_ready=AsyncMock(return_value=True),
+        intakes_between=AsyncMock(return_value=[iron]),
+    )
+
+    result = await _handle(
+        uow, GetProgressSummaryQuery(user_id=USER_ID, start_date=start, end_date=end)
+    )
+
+    first = result["days"][0]
+    assert first["iron_mg"] == 18.0
+    assert first["nrf_coverage"] == 0  # the food score stays food-only
+    assert "supplement_micros" not in first
+
+
+@pytest.mark.asyncio
+async def test_activity_calories_off_reaches_the_live_target_and_keeps_burn_visible():
+    """Trends still shows the burn; only today's live target stops counting it."""
+    today = date(2026, 9, 1)
+    uow = _uow(movement=[(datetime(2026, 9, 1, 18, 0, tzinfo=UTC), 250.0)])
+    uow.users.get_activity_calories = AsyncMock(return_value=False)
+    live_target = AsyncMock(return_value=1850.0)
+    handler = GetProgressSummaryQueryHandler()
+    with (
+        patch(
+            "src.app.handlers.query_handlers.get_progress_summary_query_handler.AsyncUnitOfWork",
+            return_value=uow,
+        ),
+        patch(
+            "src.app.handlers.query_handlers.get_progress_summary_query_handler.resolve_user_timezone_async",
+            new=AsyncMock(return_value="UTC"),
+        ),
+        patch(
+            "src.app.handlers.query_handlers.get_progress_summary_query_handler.datetime"
+        ) as mock_dt,
+        patch(
+            "src.app.handlers.query_handlers.get_progress_summary_query_handler.load_tdee_targets",
+            new=AsyncMock(return_value=_targets()),
+        ),
+        patch(
+            "src.app.handlers.query_handlers.get_progress_summary_query_handler.resolve_today_live_target",
+            new=live_target,
+        ),
+    ):
+        mock_dt.now.return_value = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+        result = await handler.handle(
+            GetProgressSummaryQuery(user_id=USER_ID, start_date=today, end_date=today)
+        )
+
+    assert live_target.await_args.kwargs["activity_calories"] is False
+    assert result["activity_calories"] is False
+    assert result["days"][-1]["burned_calories"] == 250.0
+    assert result["days"][-1]["target_calories"] == 1850.0
+
+
+@pytest.mark.asyncio
+async def test_summary_cache_from_the_other_activity_setting_is_not_served():
+    from src.app.handlers.query_handlers.progress_summary_support import (
+        read_summary_cache,
+    )
+
+    day = date(2026, 9, 1)
+    cached = {"target_revision": 3, "intake_revision": 5, "days": []}
+    cache = MagicMock()
+    cache.get_json_with_revision = AsyncMock(return_value=(cached, 5))
+
+    served_off, revision = await read_summary_cache(
+        cache, USER_ID, day, day, 3, True, activity_calories=False
+    )
+    served_on, _ = await read_summary_cache(
+        cache, USER_ID, day, day, 3, True, activity_calories=True
+    )
+
+    # A summary cached before the setting existed counted movement.
+    assert served_off is None
+    assert revision == 5
+    assert served_on == cached
+
+
+@pytest.mark.asyncio
+async def test_live_target_passes_the_activity_setting_to_the_budget_math():
+    from src.app.handlers.query_handlers.progress_summary_support import (
+        resolve_today_live_target,
+    )
+    from src.domain.services.weekly_budget_service import (
+        AdjustedDailyTargets,
+        EffectiveAdjustedResult,
+    )
+
+    day = date(2026, 9, 1)
+    uow = MagicMock()
+    uow.weekly_budgets.find_by_user_and_week = AsyncMock(
+        return_value=MagicMock(target_carbs=1400.0, target_fat=490.0)
+    )
+    uow.users.get_weekly_auto_adjust = AsyncMock(return_value=True)
+    effective = EffectiveAdjustedResult(
+        adjusted=AdjustedDailyTargets(1900.0, 200.0, 70.0, 140.0, False, 6),
+        consumed_before_today={},
+        consumed_total={},
+        logged_past_days=1,
+        skipped_days=0,
+        show_logging_prompt=False,
+    )
+    with patch(
+        "src.app.handlers.query_handlers.progress_summary_support."
+        "WeeklyBudgetService.get_effective_adjusted_daily_async",
+        new=AsyncMock(return_value=effective),
+    ) as get_effective:
+        live = await resolve_today_live_target(
+            uow,
+            USER_ID,
+            day,
+            day,
+            day,
+            "UTC",
+            2000.0,
+            140.0,
+            1600.0,
+            activity_calories=False,
+        )
+
+    assert live == 1900.0
+    assert get_effective.await_args.kwargs["activity_calories"] is False

@@ -34,6 +34,7 @@ from src.api.routes.v1.webhook_referral_funnel import (
     sync_redeemed_target_subscription,
 )
 from src.api.routes.v1.webhooks import handle_purchase, revenuecat_webhook
+from src.domain.model.streak import StreakRestorePolicy
 from src.domain.ports.subscription_service_port import EntitlementCheck
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.subscription import Subscription
@@ -83,6 +84,9 @@ def _route(user, *, uow=None, publisher=None, spy=True):
             "_get_event_publisher",
             return_value=publisher or MagicMock(publish=AsyncMock()),
         )
+        mock("get_streak_restore_policy", return_value=StreakRestorePolicy())
+        mock("get_cache_service", return_value=None)
+        mock("purge_streak_cache", new_callable=AsyncMock)
         spies = SimpleNamespace(units_of_work=units)
         if spy:
             for name in (
@@ -94,6 +98,15 @@ def _route(user, *, uow=None, publisher=None, spy=True):
             ):
                 setattr(spies, name, mock(name, new_callable=AsyncMock))
             spies.handle_lifetime_purchase.return_value = []  # no Play plans
+            spies.streak = mock(
+                "handle_streak_restore_event",
+                new_callable=AsyncMock,
+                side_effect=lambda uow, user, payload, policy: (
+                    SimpleNamespace(owner_id=user.id)
+                    if "streak_restore" in payload["product_id"]
+                    else None
+                ),
+            )
         yield spies
 
 
@@ -130,6 +143,14 @@ async def test_a_plan_cancellation_still_goes_to_the_subscription_handler():
     spies.handle_lifetime_refund.assert_not_awaited()
 
 
+async def test_a_streak_pack_purchase_still_goes_to_the_streak_handler():
+    with _route(USER) as spies:
+        await _post(event("NON_RENEWING_PURCHASE", "nutree_streak_restore_3"))
+
+    spies.streak.assert_awaited_once()
+    spies.handle_lifetime_purchase.assert_not_awaited()
+
+
 async def test_another_one_time_product_writes_no_subscription_row():
     with _route(USER) as spies:
         result = await _post(event("NON_RENEWING_PURCHASE", "nutree_tip_jar"))
@@ -155,7 +176,9 @@ async def test_an_anonymous_lifetime_purchase_is_acknowledged():
     spies.handle_lifetime_purchase.assert_not_awaited()
 
 
-async def test_a_lifetime_refund_through_the_real_router(uow, deliver, publisher):
+async def test_a_lifetime_refund_through_the_real_router_and_streak_handler(
+    uow, deliver, publisher
+):
     await deliver(handle_lifetime_purchase, lifetime())
 
     with _route(USER, uow=uow, publisher=publisher, spy=False):

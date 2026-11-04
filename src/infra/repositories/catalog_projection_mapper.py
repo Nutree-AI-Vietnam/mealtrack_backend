@@ -14,6 +14,9 @@ def projection_to_meal(row: MealCatalogProjectionORM, *, candidate: bool = False
     from src.domain.model.meal_recommendation.catalog_selection_features import (
         CatalogSelectionFeatures,
     )
+    from src.domain.model.meal_recommendation.recipe_diet_labels import (
+        RecipeDietLabels,
+    )
 
     meal = CatalogMeal.from_dict(cast(dict[str, Any], row.summary_payload))
     return replace(
@@ -31,4 +34,9 @@ def projection_to_meal(row: MealCatalogProjectionORM, *, candidate: bool = False
         )
         if candidate
         else None,
+        # Same rule as the diet filter: these columns are what it reads.
+        browse_labels=RecipeDietLabels(
+            is_vegetarian=bool(row.browse_vegetarian),
+            is_pork_free=bool(row.browse_no_pork),
+        ),
     )

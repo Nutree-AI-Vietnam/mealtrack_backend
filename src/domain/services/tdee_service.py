@@ -1,9 +1,17 @@
+import inspect
+import math
+from collections.abc import Iterable
+from datetime import date, datetime
+from typing import Any
+from uuid import UUID
+
 from src.domain.constants import NutritionConstants, TDEEConstants
 from src.domain.model.user import (
     Goal,
     JobType,
     MacroPreset,
     MacroTargets,
+    PaceRange,
     Sex,
     TdeeRequest,
     TdeeResponse,
@@ -25,14 +33,42 @@ class TdeeCalculationService:
         """Calculate BMR, TDEE and macros based on the request."""
         bmr, formula_name = self._calculate_bmr(request)
         tdee = self._calculate_tdee_from_activity(bmr, request.job_type)
+        # Minors and underweight adults get no deficit: a weight-loss goal plans
+        # at maintenance until a clinician-reviewed rule says otherwise.
+        block_reason = (
+            deficit_block_reason(
+                age=request.age,
+                weight_kg=request.weight_kg,
+                height_cm=request.height_cm,
+                health_conditions=request.health_conditions,
+            )
+            if request.goal == Goal.CUT
+            else None
+        )
+        deficit_blocked = block_reason is not None
+        # Under-18s and some conditions keep the flat bulk surplus: how fast
+        # they gain is a clinician's call, not a slider's.
+        gain_block_reason = (
+            gain_pace_block_reason(
+                age=request.age, health_conditions=request.health_conditions
+            )
+            if request.goal == Goal.BULK
+            else None
+        )
+        gain_blocked = gain_block_reason is not None
         macro_targets = self._calculate_all_macro_targets(
             tdee,
             request.weight_kg,
-            request.goal,
+            Goal.RECOMP if deficit_blocked else request.goal,
             request.training_level,
             bmr=bmr,
             sex=request.sex,
             macro_preset=request.macro_preset,
+            weight_loss_kg_per_week=request.weight_loss_kg_per_week,
+            weight_gain_kg_per_week=(
+                None if gain_blocked else request.weight_gain_kg_per_week
+            ),
+            health_conditions=request.health_conditions,
         )
         return TdeeResponse(
             bmr=round(bmr, 1),
@@ -41,6 +77,15 @@ class TdeeCalculationService:
             macros=macro_targets,
             formula_used=formula_name,
             macro_preset=request.macro_preset,
+            deficit_blocked_reason=block_reason,
+            gain_pace_blocked_reason=gain_block_reason,
+            pace_range=(
+                pace_range(request.weight_kg, tdee, bmr, request.sex)
+                if request.goal == Goal.CUT and not deficit_blocked
+                else gain_pace_range(request.weight_kg)
+                if request.goal == Goal.BULK and not gain_blocked
+                else None
+            ),
         )
 
     def _calculate_bmr(self, request: TdeeRequest) -> tuple[float, str]:
@@ -84,6 +129,9 @@ class TdeeCalculationService:
         bmr: float = None,
         sex: Sex = None,
         macro_preset: MacroPreset = MacroPreset.STANDARD,
+        weight_loss_kg_per_week: float | None = None,
+        weight_gain_kg_per_week: float | None = None,
+        health_conditions: Iterable[str] = (),
     ) -> MacroTargets:
         """Calculate macro targets using weight-based approach.
 
@@ -102,10 +150,20 @@ class TdeeCalculationService:
         """
         # Determine target calories based on goal
         if goal == Goal.CUT:
-            calories = tdee - TDEEConstants.CUTTING_DEFICIT
+            deficit = (
+                daily_pace_kcal(weight_loss_kg_per_week)
+                if weight_loss_kg_per_week
+                else TDEEConstants.CUTTING_DEFICIT
+            )
+            calories = tdee - deficit
             goal_key = "cut"
         elif goal == Goal.BULK:
-            calories = tdee + TDEEConstants.BULKING_SURPLUS
+            surplus = (
+                daily_pace_kcal(weight_gain_kg_per_week)
+                if weight_gain_kg_per_week
+                else TDEEConstants.BULKING_SURPLUS
+            )
+            calories = tdee + surplus
             goal_key = "bulk"
         elif goal == Goal.RECOMP:
             calories = tdee + TDEEConstants.RECOMP_ADJUSTMENT
@@ -117,12 +175,7 @@ class TdeeCalculationService:
         # Apply calorie floor: never below BMR or clinical minimum (1200F/1500M)
         # Industry standard used by MyFitnessPal, Noom, Lose It
         if bmr is not None and sex is not None:
-            clinical_min = (
-                TDEEConstants.MIN_CALORIES_FEMALE
-                if sex == Sex.FEMALE
-                else TDEEConstants.MIN_CALORIES_MALE
-            )
-            calories = max(calories, bmr, clinical_min)
+            calories = max(calories, calorie_floor(bmr, sex))
 
         # Diet presets (e.g. keto) are labels for meal guidance only — they must
         # not rewrite base daily macros. Weight-based allocation always wins.
@@ -137,10 +190,21 @@ class TdeeCalculationService:
             ).get(training_key, TDEEConstants.PROTEIN_PER_KG.get(goal_key, 1.8))
         else:
             protein_multiplier = TDEEConstants.PROTEIN_PER_KG.get(goal_key, 1.8)
+        # Chronic kidney disease: KDIGO suggests about 0.8 g/kg a day, half
+        # what a cut otherwise asks for. Capped until a dietitian-reviewed
+        # pack says otherwise.
+        limits_protein = "kidney_disease" in {
+            str(condition).strip().lower() for condition in health_conditions
+        }
+        if limits_protein:
+            protein_multiplier = min(protein_multiplier, CKD_PROTEIN_PER_KG)
         protein_g = weight_kg * protein_multiplier
-        protein_g = max(
-            TDEEConstants.MIN_PROTEIN_G, min(protein_g, TDEEConstants.MAX_PROTEIN_G)
-        )
+        protein_g = min(protein_g, TDEEConstants.MAX_PROTEIN_G)
+        if not limits_protein:
+            # The 60 g floor keeps a healthy target from collapsing, but for
+            # kidney disease going over 0.8 g/kg is the harm being avoided,
+            # so the cap wins.
+            protein_g = max(TDEEConstants.MIN_PROTEIN_G, protein_g)
 
         # Fat dual-gate: max(weight-based, percentage-based) for hormone safety
         # Dorgan 1996: <20% cal reduces testosterone; Kerksick 2018 ISSN
@@ -259,3 +323,234 @@ class TdeeCalculationService:
                 f"{TDEEConstants.MAX_WEIGHT_KG}, got {weight_kg}"
             )
         return self._calculate_all_macro_targets(tdee, weight_kg, goal, training_level)
+
+
+# Weight pace: a chosen kg per week between the research limits. A loss is
+# capped where the daily target would drop below the calorie floor; a gain has
+# no floor, so only the fast limit caps it.
+
+# Same factor the mobile app uses in WeightConstants.kgToLbFactor.
+KG_TO_LB = 2.20462
+
+
+def daily_pace_kcal(kg_per_week: float) -> float:
+    """Daily deficit for a weekly loss, or surplus for a weekly gain: ~7,700 kcal
+    per kg, spread over 7 days."""
+    return kg_per_week * TDEEConstants.KCAL_PER_KG_BODY_WEIGHT / 7
+
+
+ADULT_AGE = 18
+UNDERWEIGHT_BMI = 18.5
+# Conditions a user can report. Each one changes what a safe target is, so
+# the set is closed: an unknown string would silently do nothing.
+HEALTH_CONDITIONS = (
+    "pregnancy",
+    "breastfeeding",
+    "kidney_disease",
+    "insulin_treated_diabetes",
+    "eating_disorder_history",
+)
+# Reported conditions where losing weight is a clinician's call, not ours.
+NO_DEFICIT_CONDITIONS = frozenset(
+    {"pregnancy", "breastfeeding", "eating_disorder_history"}
+)
+# Reported conditions where a chosen gain pace is a clinician's call; a bulk
+# keeps the flat +300 surplus instead. Pregnancy: IOM 2009 puts 2nd and 3rd
+# trimester gain at 0.17-0.58 kg a week by BMI, and the DRI adds 0, 340 and
+# 452 kcal a day by trimester. Breastfeeding: the DRI adds 330-400 kcal a day.
+# Eating-disorder history: APA 2023 has the treatment team set weekly gain.
+# Kidney disease: KDOQI 2020 puts intake at 25-35 kcal/kg a day, and with
+# protein capped a fast surplus is mostly fat.
+NO_GAIN_PACE_CONDITIONS = frozenset(
+    {"pregnancy", "breastfeeding", "eating_disorder_history", "kidney_disease"}
+)
+# KDIGO suggests about 0.8 g/kg a day for adults with CKD G3-G5, against the
+# 1.6-1.8 g/kg these formulas otherwise use.
+CKD_PROTEIN_PER_KG = 0.8
+
+
+# Why a weight-loss goal was planned at maintenance. The client shows the
+# user a reason rather than a target that silently disagrees with their goal.
+DEFICIT_BLOCK_MINOR = "minor"
+DEFICIT_BLOCK_UNDERWEIGHT = "underweight"
+DEFICIT_BLOCK_HEALTH_CONDITION = "health_condition"
+
+
+def deficit_block_reason(
+    *,
+    age: int,
+    weight_kg: float,
+    height_cm: float,
+    health_conditions: Iterable[str] = (),
+) -> str | None:
+    """Why this user must not be given a calorie deficit, or None.
+
+    Under-18s are still growing and every formula here is an adult one, and a
+    BMI below 18.5 is underweight (WHO). Pregnancy, breastfeeding and a
+    history of disordered eating are a clinician's call. All plan at
+    maintenance until a reviewed rule pack says otherwise.
+    """
+    if age < ADULT_AGE:
+        return DEFICIT_BLOCK_MINOR
+    if NO_DEFICIT_CONDITIONS & {
+        str(condition).strip().lower() for condition in health_conditions
+    }:
+        return DEFICIT_BLOCK_HEALTH_CONDITION
+    if height_cm <= 0:
+        return None
+    bmi = weight_kg / (height_cm / 100) ** 2
+    if bmi < UNDERWEIGHT_BMI:
+        return DEFICIT_BLOCK_UNDERWEIGHT
+    return None
+
+
+def gain_pace_block_reason(
+    *, age: int, health_conditions: Iterable[str] = ()
+) -> str | None:
+    """Why this user must not pick a gain pace, or None.
+
+    Under-18s are still growing and every formula here is an adult one. The
+    conditions in NO_GAIN_PACE_CONDITIONS have their own gain or intake
+    targets. Insulin-treated diabetes and underweight adults may gain.
+    """
+    if age < ADULT_AGE:
+        return DEFICIT_BLOCK_MINOR
+    if NO_GAIN_PACE_CONDITIONS & {
+        str(condition).strip().lower() for condition in health_conditions
+    }:
+        return DEFICIT_BLOCK_HEALTH_CONDITION
+    return None
+
+
+def deficit_not_allowed(
+    *,
+    age: int,
+    weight_kg: float,
+    height_cm: float,
+    health_conditions: Iterable[str] = (),
+) -> bool:
+    """True for users who must not be given a calorie deficit."""
+    return (
+        deficit_block_reason(
+            age=age,
+            weight_kg=weight_kg,
+            height_cm=height_cm,
+            health_conditions=health_conditions,
+        )
+        is not None
+    )
+
+
+def calorie_floor(bmr: float, sex: Sex) -> float:
+    """Lowest daily target: BMR, and never under 1200 kcal (women) / 1500 (men)."""
+    clinical_min = (
+        TDEEConstants.MIN_CALORIES_FEMALE
+        if sex == Sex.FEMALE
+        else TDEEConstants.MIN_CALORIES_MALE
+    )
+    return max(bmr, clinical_min)
+
+
+def _round_down_to_step(kg: float) -> float:
+    # The slider moves in 0.01 kg steps; rounding down keeps the end above the floor.
+    return math.floor(kg * 100 + 1e-9) / 100
+
+
+def _within_pace_limits(kg: float) -> float:
+    return round(
+        min(
+            max(kg, TDEEConstants.PACE_MIN_KG_PER_WEEK),
+            TDEEConstants.PACE_MAX_KG_PER_WEEK,
+        ),
+        2,
+    )
+
+
+def pace_range(weight_kg: float, tdee: float, bmr: float, sex: Sex) -> PaceRange:
+    """The loss paces this person can pick, from the slow limit to their own maximum."""
+    cap_kg = max(0.0, tdee - calorie_floor(bmr, sex)) / daily_pace_kcal(1)
+    max_kg = _round_down_to_step(min(TDEEConstants.PACE_MAX_KG_PER_WEEK, cap_kg))
+    return PaceRange(
+        min_kg_per_week=TDEEConstants.PACE_MIN_KG_PER_WEEK,
+        max_kg_per_week=max_kg,
+        recommended_low_kg=_within_pace_limits(
+            weight_kg * TDEEConstants.PACE_RECOMMENDED_LOW_PERCENT
+        ),
+        recommended_high_kg=_within_pace_limits(
+            weight_kg * TDEEConstants.PACE_RECOMMENDED_HIGH_PERCENT
+        ),
+    )
+
+
+def gain_pace_range(weight_kg: float) -> PaceRange:
+    """The gain paces anyone can pick: no floor caps a surplus, so the slider
+    runs from the slow limit to the fast one."""
+    return PaceRange(
+        min_kg_per_week=TDEEConstants.PACE_MIN_KG_PER_WEEK,
+        max_kg_per_week=TDEEConstants.PACE_MAX_KG_PER_WEEK,
+        recommended_low_kg=_within_pace_limits(
+            weight_kg * TDEEConstants.GAIN_PACE_RECOMMENDED_LOW_PERCENT
+        ),
+        recommended_high_kg=_within_pace_limits(
+            weight_kg * TDEEConstants.GAIN_PACE_RECOMMENDED_HIGH_PERCENT
+        ),
+    )
+
+
+def clamp_pace(kg_per_week: float | None, allowed: PaceRange) -> float | None:
+    """Keep a chosen pace at or under this person's maximum.
+
+    The slow limit is a screen limit, not a safety one, so slower paces stay.
+    None when no deficit fits, which keeps the flat cut.
+    """
+    if kg_per_week is None or allowed.max_kg_per_week <= 0:
+        return None
+    return round(min(kg_per_week, allowed.max_kg_per_week), 2)
+
+
+def allowed_pace(request: TdeeRequest, kg_per_week: float | None) -> float | None:
+    """The requested loss pace capped by this person's floor; None for a non-cut goal."""
+    if kg_per_week is None or request.goal != Goal.CUT:
+        return None
+    allowed = TdeeCalculationService().calculate_tdee(request).pace_range
+    return clamp_pace(kg_per_week, allowed) if allowed else None
+
+
+def allowed_gain_pace(request: TdeeRequest, kg_per_week: float | None) -> float | None:
+    """The requested gain pace, capped only at the fast limit; None for a
+    non-bulk goal or a user whose gain pace is blocked."""
+    if kg_per_week is None or request.goal != Goal.BULK:
+        return None
+    if gain_pace_block_reason(
+        age=request.age, health_conditions=request.health_conditions
+    ):
+        return None
+    return clamp_pace(kg_per_week, gain_pace_range(request.weight_kg))
+
+
+def kg_to_lb(kg_per_week: float | None) -> float | None:
+    return None if kg_per_week is None else round(kg_per_week * KG_TO_LB, 2)
+
+
+async def pace_reset_on_for_user(uow: Any, user_id: str) -> date | None:
+    """Local date of the latest pace change, if the profile stores one."""
+    try:
+        user_uuid = UUID(str(user_id))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    users = getattr(uow, "users", None)
+    getter = getattr(users, "get_profile", None) if users is not None else None
+    if not callable(getter):
+        return None
+    try:
+        profile = getter(user_uuid)
+        if inspect.iscoroutine(profile):
+            profile = await profile
+    except Exception:
+        return None
+    reset_on = getattr(profile, "weight_loss_pace_reset_on", None)
+    if isinstance(reset_on, datetime):
+        return reset_on.date()
+    if isinstance(reset_on, date):
+        return reset_on
+    return None

@@ -1,18 +1,23 @@
 """Real PostgreSQL parity and fencing for rebuildable catalog projections."""
 
+from collections import Counter
 from decimal import Decimal
 
 import pytest
 from sqlalchemy import event, select, text
 
 from src.domain.model.weekly_meal_planner import WeeklyMealPlanPreferences
-from src.domain.ports.catalog_recipe_repository_port import CatalogRecipePage
+from src.domain.ports.catalog_recipe_repository_port import (
+    CatalogMealRepositoryPort,
+    CatalogRecipePage,
+)
 from src.domain.services.weekly_meal_planner.allergen_constraint import (
     resolve_allergen_preferences,
 )
 from src.domain.services.weekly_meal_planner.weekly_plan_generation_service import (
     WeeklyPlanGenerationService,
 )
+from src.infra.database.models.meal_recommendation import MealCatalogIngredientORM
 from src.infra.database.models.meal_recommendation.catalog_projection import (
     MealCatalogProjectionORM,
 )
@@ -70,6 +75,10 @@ async def test_projected_filter_order_count_and_compact_generation_match_authori
         {"dislikes": ("CÁ", "  ")},
         {"allergies": ("dairy",)},
         {"allergies": ("unknown-code",)},
+        {"min_protein": 0},
+        {"min_protein": 4},
+        {"min_protein": 1000},
+        {"diet": "vegetarian", "min_protein": 4},
     ]
     for options in filters:
         for offset in (0, 1, 99):
@@ -90,6 +99,11 @@ async def test_projected_filter_order_count_and_compact_generation_match_authori
             ] == [
                 (meal.protein_g, meal.carbs_g, meal.calories) for meal in before.items
             ]
+            # Labels come from the projection columns the diet filter reads.
+            assert [meal.diet_labels for meal in after.items] == [
+                meal.diet_labels for meal in before.items
+            ]
+            assert all(meal.browse_labels is not None for meal in after.items)
     meals = await projected.list_active_meals()
     candidates = await projected.list_selection_candidates()
     assert {meal.id for meal in candidates} == set(ids)
@@ -112,6 +126,35 @@ async def test_projected_filter_order_count_and_compact_generation_match_authori
         assert generator.generate(meals, **args) == generator.generate(
             candidates, **args
         )
+
+
+@pytest.mark.asyncio
+async def test_selection_ingredient_lines_match_active_meal_ingredients(pg_session):
+    ids, _ = await seed_catalog(pg_session)
+    pg_session.add(
+        MealCatalogIngredientORM(
+            catalog_meal_id=ids[0],
+            position=2,
+            food_reference_id=None,
+            display_name="Muối",
+            quantity=Decimal("2"),
+            unit="g",
+            is_optional=True,
+        )
+    )
+    await pg_session.execute(
+        text("UPDATE meal_catalog SET is_active = false WHERE id = :id"),
+        {"id": ids[1]},
+    )
+    await pg_session.commit()
+    repo = AsyncCatalogMealRepository(pg_session)
+
+    lines = await repo.list_selection_ingredient_lines()
+
+    authority = await CatalogMealRepositoryPort.list_selection_ingredient_lines(repo)
+    assert Counter(lines) == Counter(authority)
+    assert (ids[0], None, "Muối") in lines
+    assert ids[1] not in {recipe_id for recipe_id, _, _ in lines}
 
 
 @pytest.mark.asyncio
@@ -194,3 +237,15 @@ async def test_compact_summaries_use_one_select_and_backfill_is_restartable(pg_s
     assert count == 2 and cursor
     count2, cursor2 = await rebuilder.reconcile_page(after_id=cursor, limit=2)
     assert count2 == 2 and cursor2 > cursor
+
+
+@pytest.mark.asyncio
+async def test_batch_details_load_active_recipes_with_steps(pg_session):
+    ids, _ = await seed_catalog(pg_session)
+    repo = AsyncCatalogMealRepository(pg_session)
+
+    details = await repo.get_meal_details([ids[1], "missing", ids[0], ids[1]])
+
+    assert sorted(meal.id for meal in details) == sorted(ids[:2])
+    single = await repo.get_meal_detail(ids[0])
+    assert next(meal for meal in details if meal.id == ids[0]) == single

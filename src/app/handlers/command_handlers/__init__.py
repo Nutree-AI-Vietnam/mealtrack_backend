@@ -28,6 +28,7 @@ from .unfavorite_meal_command_handler import UnfavoriteMealCommandHandler
 
 # Hydration handlers
 from .log_hydration_command_handler import LogHydrationCommandHandler
+from .restore_streak_command_handler import RestoreStreakCommandHandler
 
 # Movement handlers
 from .log_movement_command_handler import LogMovementCommandHandler
@@ -60,7 +61,11 @@ from .update_movement_entry_command_handler import UpdateMovementEntryCommandHan
 from .update_notification_preferences_command_handler import (
     UpdateNotificationPreferencesCommandHandler,
 )
+from .update_activity_calories_command_handler import (
+    UpdateActivityCaloriesCommandHandler,
+)
 from .update_timezone_command_handler import UpdateTimezoneCommandHandler
+from .update_user_avatar_command_handler import UpdateUserAvatarCommandHandler
 from .update_weekly_auto_adjust_command_handler import (
     UpdateWeeklyAutoAdjustCommandHandler,
 )
@@ -70,6 +75,9 @@ from .update_user_last_accessed_command_handler import (
 from .update_user_metrics_command_handler import UpdateUserMetricsCommandHandler
 from .upload_meal_image_immediately_command_handler import (
     UploadMealImageImmediatelyHandler,
+)
+from .upload_user_avatar_photo_command_handler import (
+    UploadUserAvatarPhotoCommandHandler,
 )
 
 __all__ = [
@@ -95,6 +103,9 @@ __all__ = [
     "UpdateLanguageCommandHandler",
     "UpdateTimezoneCommandHandler",
     "UpdateWeeklyAutoAdjustCommandHandler",
+    "UpdateActivityCaloriesCommandHandler",
+    "UpdateUserAvatarCommandHandler",
+    "UploadUserAvatarPhotoCommandHandler",
     # Meal Suggestion handlers
     "DiscoverMealsCommandHandler",
     "GenerateMealRecipesCommandHandler",
@@ -113,6 +124,7 @@ __all__ = [
     "DeleteSavedSuggestionCommandHandler",
     # Hydration handlers
     "LogHydrationCommandHandler",
+    "RestoreStreakCommandHandler",
     "LogCaloricDrinkCommandHandler",
     "DeleteHydrationEntryCommandHandler",
     "DescribeHydrationCommandHandler",

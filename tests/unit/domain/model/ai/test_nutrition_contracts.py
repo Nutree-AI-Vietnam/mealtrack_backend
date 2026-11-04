@@ -180,7 +180,7 @@ class TestVisionNutritionResponse:
                 }
             )
 
-    def test_rejects_more_than_eight_foods(self):
+    def test_rejects_more_than_twenty_foods(self):
         with pytest.raises(ValidationError):
             VisionNutritionResponse.model_validate(
                 {
@@ -190,7 +190,7 @@ class TestVisionNutritionResponse:
                             "quantity_g": 10.0,
                             "macros": _valid_macros(),
                         }
-                        for index in range(9)
+                        for index in range(21)
                     ]
                 }
             )

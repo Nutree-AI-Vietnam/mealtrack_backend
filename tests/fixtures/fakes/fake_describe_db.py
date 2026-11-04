@@ -131,7 +131,7 @@ class _Claims:
             request_fingerprint=claim.fingerprint,
         )
 
-    async def lookup(self, *, user_id, operation, idempotency_key):
+    async def lookup(self, *, user_id, operation, idempotency_key, for_update=False):
         claim = self.uow.work.claims.get((user_id, operation, idempotency_key))
         if claim is None:
             return None

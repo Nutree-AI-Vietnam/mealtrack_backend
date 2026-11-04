@@ -105,10 +105,15 @@ async def test_missing_week_generate_race_completes_one_atomic_plan(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("compact_week_percent", "expected"), [(0, "v2"), (100, "v3-compact")]
+)
 async def test_short_regeneration_records_current_algorithm_version(
     pg_session,
     async_session_factory,
     monkeypatch,
+    compact_week_percent,
+    expected,
 ):
     user_id, plan, _ = await _seed(pg_session)
     await pg_session.execute(
@@ -120,7 +125,12 @@ async def test_short_regeneration_records_current_algorithm_version(
     monkeypatch.setattr(
         "src.infra.database.uow_async.AsyncSessionLocal", async_session_factory
     )
-    service = WeeklyMealPlanService(AsyncUnitOfWork)
+    monkeypatch.setattr(
+        "src.app.services.weekly_meal_plan_service._basket_ids_cache", None
+    )
+    service = WeeklyMealPlanService(
+        AsyncUnitOfWork, compact_week_percent=compact_week_percent
+    )
 
     regenerated = await service.generate(_command(user_id, str(uuid4())))
 
@@ -133,7 +143,7 @@ async def test_short_regeneration_records_current_algorithm_version(
                 )
             )
         ).scalar_one()
-    assert stored == service.generator.algorithm_version
+    assert stored == expected
 
 
 @pytest.mark.asyncio

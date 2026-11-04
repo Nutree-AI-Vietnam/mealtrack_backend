@@ -6,6 +6,16 @@ from collections.abc import Sequence
 from datetime import datetime
 
 
+def is_latest_message(
+    target_id: str,
+    target_created_at: datetime,
+    target_role: str,
+    messages: Sequence[tuple[str, datetime, str]],
+) -> bool:
+    """True when no message in the thread sorts after the target."""
+    return not message_ids_after(target_id, target_created_at, target_role, messages)
+
+
 def message_ids_after(
     target_id: str,
     target_created_at: datetime,

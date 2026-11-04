@@ -8,6 +8,7 @@ from src.app.services.ai_jobs.executors import (
 )
 from src.app.services.ai_jobs.notifier import AiJobNotifier
 from src.app.services.ai_jobs.push_token_service import PushTokenService
+from src.app.services.ai_jobs.recipe_import_executor import RecipeImportJobExecutor
 from src.app.services.ai_jobs.service import AiJobService, new_chat_job
 from src.app.services.ai_jobs.signals import (
     AiJobCancelSignals,
@@ -29,5 +30,6 @@ __all__ = [
     "MealScanJobExecutor",
     "ParseTextJobExecutor",
     "PushTokenService",
+    "RecipeImportJobExecutor",
     "new_chat_job",
 ]

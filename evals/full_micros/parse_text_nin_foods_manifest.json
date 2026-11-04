@@ -1,0 +1,3965 @@
+{
+  "schema_version": 1,
+  "corpus_version": "nin-foods-full-micros-v1",
+  "review_status": "reviewed",
+  "reviewed_by": "Tony Tran (2026-10-31)",
+  "privacy_reviewed": true,
+  "source_provenance": "Vietnam National Institute of Nutrition food composition table (viendinhduong.vn foods API); per-100 g values scaled to the stated grams, blanks masked. No user data.",
+  "cases": [
+    {
+      "case_id": "nin-10001-200g-vi",
+      "split": "development",
+      "language": "vi",
+      "text": "200g sữa bò tươi",
+      "expected_items": [
+        {
+          "aliases": [
+            "fresh cow's milk",
+            "Sữa bò tươi"
+          ],
+          "quantity_g": 200
+        }
+      ],
+      "expected_calories_kcal": [
+        125.8,
+        170.2
+      ],
+      "expected_macros": {
+        "protein_g": 7.8,
+        "carbs_g": 9.6,
+        "fat_g": 8.8,
+        "fiber_g": 0.0,
+        "sugar_g": 10.52
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 103.66
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 2.0
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.12
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 222.66
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.18
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 29.68
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 265.34
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 705.08
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 3.74
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 2.0
+        },
+        "vitamin_k": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.4
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.1
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.38
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.2
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.08
+        },
+        "vitamin_b12": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 10.0
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 176.28
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.74
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 2.22
+        }
+      },
+      "nin_code": "10001"
+    },
+    {
+      "case_id": "nin-10036-100g-en",
+      "split": "development",
+      "language": "en",
+      "text": "100g plain unsweetened yogurt",
+      "expected_items": [
+        {
+          "aliases": [
+            "plain unsweetened yogurt",
+            "Sữa chua, đặc, không đường"
+          ],
+          "quantity_g": 100
+        }
+      ],
+      "expected_calories_kcal": [
+        51.85,
+        70.15
+      ],
+      "expected_macros": {
+        "protein_g": 3.3,
+        "carbs_g": 3.6,
+        "fat_g": 3.7,
+        "fiber_g": 0.0,
+        "sugar_g": 3.24
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 25.92
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.7
+        },
+        "vitamin_e": {
+          "status": "masked",
+          "unit": "mg"
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 120.0
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.1
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 12.0
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 155.0
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 46.0
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 2.1
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.04
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.2
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.1
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.03
+        },
+        "vitamin_b12": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.37
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 7.0
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 95.0
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.59
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 2.2
+        }
+      },
+      "nin_code": "10036"
+    },
+    {
+      "case_id": "nin-9001-50g-vi",
+      "split": "held_out",
+      "language": "vi",
+      "text": "1 quả trứng gà luộc 50g",
+      "expected_items": [
+        {
+          "aliases": [
+            "boiled chicken egg",
+            "Trứng gà ta"
+          ],
+          "quantity_g": 50
+        }
+      ],
+      "expected_calories_kcal": [
+        63.75,
+        86.25
+      ],
+      "expected_macros": {
+        "protein_g": 6.48,
+        "carbs_g": 0.625,
+        "fat_g": 5.165,
+        "fiber_g": 0.0,
+        "sugar_g": 0.385
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 82.99
+        },
+        "vitamin_c": {
+          "status": "masked",
+          "unit": "mg"
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 4.175
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 27.5
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.35
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 5.5
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 88.0
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 79.0
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 1.55
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.44
+        },
+        "vitamin_k": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.15
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.045
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.155
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.1
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.07
+        },
+        "vitamin_b12": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 7.175
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 105.0
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.45
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 15.85
+        }
+      },
+      "nin_code": "9001"
+    },
+    {
+      "case_id": "nin-7028002-150g-vi",
+      "split": "development",
+      "language": "vi",
+      "text": "150g thịt vịt luộc",
+      "expected_items": [
+        {
+          "aliases": [
+            "boiled duck meat",
+            "Thịt vịt, luộc"
+          ],
+          "quantity_g": 150
+        }
+      ],
+      "expected_calories_kcal": [
+        473.025,
+        639.975
+      ],
+      "expected_macros": {
+        "protein_g": 37.08,
+        "carbs_g": 0.0,
+        "fat_g": 45.42,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 562.5
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 2.91
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.17
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 27.09
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 3.75
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 31.245
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 435.42
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 131.25
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 27.54
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 11.46
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.12
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.255
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 7.83
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.315
+        },
+        "vitamin_b12": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.42
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 13.545
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 302.085
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 2.835
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 25.83
+        }
+      },
+      "nin_code": "7028002"
+    },
+    {
+      "case_id": "nin-7095003-150g-en",
+      "split": "development",
+      "language": "en",
+      "text": "150g steamed beef shoulder",
+      "expected_items": [
+        {
+          "aliases": [
+            "steamed beef shoulder",
+            "Thịt bò, vai, hấp"
+          ],
+          "quantity_g": 150
+        }
+      ],
+      "expected_calories_kcal": [
+        243.525,
+        329.475
+      ],
+      "expected_macros": {
+        "protein_g": 48.69,
+        "carbs_g": 0.36,
+        "fat_g": 10.035,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 4.485
+        },
+        "vitamin_c": {
+          "status": "masked",
+          "unit": "mg"
+        },
+        "vitamin_e": {
+          "status": "masked",
+          "unit": "mg"
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 29.1
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 4.74
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 47.01
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 821.64
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 179.1
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 4.17
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.225
+        },
+        "vitamin_k": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 3.36
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.15
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.3
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 8.955
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.02
+        },
+        "vitamin_b12": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 4.125
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 3.36
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 476.865
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 12.15
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 54.18
+        }
+      },
+      "nin_code": "7095003"
+    },
+    {
+      "case_id": "nin-7018002-100g-en",
+      "split": "held_out",
+      "language": "en",
+      "text": "100g boiled medium-fat pork",
+      "expected_items": [
+        {
+          "aliases": [
+            "boiled medium-fat pork",
+            "Thịt lợn nửa nạc, nửa mỡ, luộc"
+          ],
+          "quantity_g": 100
+        }
+      ],
+      "expected_calories_kcal": [
+        187.0,
+        253.0
+      ],
+      "expected_macros": {
+        "protein_g": 13.98,
+        "carbs_g": 0.0,
+        "fat_g": 18.22,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 8.47
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.85
+        },
+        "vitamin_e": {
+          "status": "masked",
+          "unit": "mg"
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 7.63
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.27
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 16.1
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 241.53
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 46.61
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 6.18
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.36
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.11
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.83
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.27
+        },
+        "vitamin_b12": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.41
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 1.69
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 150.85
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.62
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 24.32
+        }
+      },
+      "nin_code": "7018002"
+    },
+    {
+      "case_id": "nin-7041002-50g-vi",
+      "split": "development",
+      "language": "vi",
+      "text": "50g gan lợn luộc",
+      "expected_items": [
+        {
+          "aliases": [
+            "boiled pork liver",
+            "Gan lợn, luộc"
+          ],
+          "quantity_g": 50
+        }
+      ],
+      "expected_calories_kcal": [
+        63.75,
+        86.25
+      ],
+      "expected_macros": {
+        "protein_g": 12.21,
+        "carbs_g": 1.3,
+        "fat_g": 2.34,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 3896.105
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 5.845
+        },
+        "vitamin_e": {
+          "status": "masked",
+          "unit": "mg"
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 4.545
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 7.79
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 11.04
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 290.26
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 71.43
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 0.76
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.21
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.095
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 8.415
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.36
+        },
+        "vitamin_b12": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 13.505
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 68.505
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 229.22
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 3.74
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 34.22
+        }
+      },
+      "nin_code": "7041002"
+    },
+    {
+      "case_id": "nin-8020002-150g-en",
+      "split": "development",
+      "language": "en",
+      "text": "150g boiled scad fish (cá nục)",
+      "expected_items": [
+        {
+          "aliases": [
+            "boiled scad fish (cá nục)",
+            "Cá nục, luộc"
+          ],
+          "quantity_g": 150
+        }
+      ],
+      "expected_calories_kcal": [
+        169.575,
+        229.425
+      ],
+      "expected_macros": {
+        "protein_g": 36.51,
+        "carbs_g": 0.0,
+        "fat_g": 5.97,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 27.105
+        },
+        "vitamin_c": {
+          "status": "masked",
+          "unit": "mg"
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.035
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 153.615
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 5.88
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 74.1
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 692.175
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 187.95
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 2.31
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.18
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.09
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.465
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 22.815
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.255
+        },
+        "vitamin_b12": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 1.125
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 16.26
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 289.155
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 3.105
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 65.97
+        }
+      },
+      "nin_code": "8020002"
+    },
+    {
+      "case_id": "nin-8051002-100g-vi",
+      "split": "held_out",
+      "language": "vi",
+      "text": "100g tôm biển luộc",
+      "expected_items": [
+        {
+          "aliases": [
+            "boiled sea shrimp",
+            "Tôm biển, luộc"
+          ],
+          "quantity_g": 100
+        }
+      ],
+      "expected_calories_kcal": [
+        69.7,
+        94.3
+      ],
+      "expected_macros": {
+        "protein_g": 17.6,
+        "carbs_g": 0.9,
+        "fat_g": 0.9,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 20.42
+        },
+        "vitamin_c": {
+          "status": "masked",
+          "unit": "mg"
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.1
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 79.0
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.6
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 37.0
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 185.0
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 148.0
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 0.33
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.05
+        },
+        "vitamin_k": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.04
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.08
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 2.07
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.1
+        },
+        "vitamin_b12": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 1.16
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 3.0
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 184.0
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.11
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 38.0
+        }
+      },
+      "nin_code": "8051002"
+    },
+    {
+      "case_id": "nin-4016002-150g-vi",
+      "split": "development",
+      "language": "vi",
+      "text": "150g cải xanh luộc",
+      "expected_items": [
+        {
+          "aliases": [
+            "boiled mustard greens",
+            "Cải xanh, luộc"
+          ],
+          "quantity_g": 150
+        }
+      ],
+      "expected_calories_kcal": [
+        33.15,
+        44.85
+      ],
+      "expected_macros": {
+        "protein_g": 2.715,
+        "carbs_g": 6.225,
+        "fat_g": 0.315,
+        "fiber_g": 2.865,
+        "sugar_g": 2.55
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 837.765
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 44.76
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 3.21
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 142.02
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 3.03
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 36.45
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 352.335
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 45.645
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 0.015
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 793.56
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.075
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.135
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.9
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.165
+        },
+        "vitamin_b12": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 179.04
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 21.54
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.44
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 1.44
+        }
+      },
+      "nin_code": "4016002"
+    },
+    {
+      "case_id": "nin-4100002-150g-en",
+      "split": "development",
+      "language": "en",
+      "text": "150g boiled broccoli",
+      "expected_items": [
+        {
+          "aliases": [
+            "boiled broccoli",
+            "Súp lơ xanh, luộc"
+          ],
+          "quantity_g": 150
+        }
+      ],
+      "expected_calories_kcal": [
+        43.35,
+        58.65
+      ],
+      "expected_macros": {
+        "protein_g": 3.855,
+        "carbs_g": 7.935,
+        "fat_g": 0.39,
+        "fiber_g": 4.17,
+        "sugar_g": 3.945
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 10.11
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 63.195
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.045
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 43.05
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.945
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 26.085
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 391.305
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 30.0
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 0.06
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 26.355
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.075
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.105
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.675
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.18
+        },
+        "vitamin_b12": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 44.61
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 80.865
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.84
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.78
+        }
+      },
+      "nin_code": "4100002"
+    },
+    {
+      "case_id": "nin-5017-200g-en",
+      "split": "held_out",
+      "language": "en",
+      "text": "200g ripe papaya",
+      "expected_items": [
+        {
+          "aliases": [
+            "ripe papaya",
+            "Đu đủ chín, tươi"
+          ],
+          "quantity_g": 200
+        }
+      ],
+      "expected_calories_kcal": [
+        64.6,
+        87.4
+      ],
+      "expected_macros": {
+        "protein_g": 2.0,
+        "carbs_g": 16.38,
+        "fat_g": 0.22,
+        "fiber_g": 1.2,
+        "sugar_g": 11.8
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 111.58
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 108.0
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.46
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 80.0
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 5.2
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 16.0
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 441.0
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 8.6
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 0.08
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 5.2
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.04
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.04
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.8
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.04
+        },
+        "vitamin_b12": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 76.0
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 64.0
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.2
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 1.2
+        }
+      },
+      "nin_code": "5017"
+    },
+    {
+      "case_id": "nin-3015-30g-vi",
+      "split": "development",
+      "language": "vi",
+      "text": "30g hạt điều",
+      "expected_items": [
+        {
+          "aliases": [
+            "cashew nuts",
+            "Hạt điều, khô"
+          ],
+          "quantity_g": 30
+        }
+      ],
+      "expected_calories_kcal": [
+        155.04,
+        209.76
+      ],
+      "expected_macros": {
+        "protein_g": 5.52,
+        "carbs_g": 8.79,
+        "fat_g": 13.89,
+        "fiber_g": 0.18,
+        "sugar_g": 1.773
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.126
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.3
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.27
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 8.4
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.08
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 87.6
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 198.0
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 3.6
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 2.334
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 10.23
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.075
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.102
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.72
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.126
+        },
+        "vitamin_b12": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 7.5
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 138.6
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.734
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 5.97
+        }
+      },
+      "nin_code": "3015"
+    },
+    {
+      "case_id": "nin-5051-150g-en",
+      "split": "development",
+      "language": "en",
+      "text": "1 apple, 150g",
+      "expected_items": [
+        {
+          "aliases": [
+            "apple",
+            "Táo tây, tươi"
+          ],
+          "quantity_g": 150
+        }
+      ],
+      "expected_calories_kcal": [
+        63.75,
+        86.25
+      ],
+      "expected_macros": {
+        "protein_g": 0.75,
+        "carbs_g": 17.565,
+        "fat_g": 0.135,
+        "fiber_g": 0.9,
+        "sugar_g": 15.585
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 4.065
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 10.5
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.27
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 28.5
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 3.75
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 4.5
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 152.85
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 22.8
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 0.045
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 3.3
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.06
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.045
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.3
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.06
+        },
+        "vitamin_b12": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 4.5
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 19.5
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.3
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.3
+        }
+      },
+      "nin_code": "5051"
+    },
+    {
+      "case_id": "nin-4027-150g-vi",
+      "split": "held_out",
+      "language": "vi",
+      "text": "150g dưa chuột",
+      "expected_items": [
+        {
+          "aliases": [
+            "cucumber",
+            "Dưa chuột, tươi"
+          ],
+          "quantity_g": 150
+        }
+      ],
+      "expected_calories_kcal": [
+        22.95,
+        31.05
+      ],
+      "expected_macros": {
+        "protein_g": 1.2,
+        "carbs_g": 5.415,
+        "fat_g": 0.135,
+        "fiber_g": 1.05,
+        "sugar_g": 2.505
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 17.25
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 7.5
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.045
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 34.5
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.5
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 22.5
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 253.2
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 19.95
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 0.045
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 24.6
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.045
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.06
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.15
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.06
+        },
+        "vitamin_b12": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 10.5
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 40.5
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.27
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.45
+        }
+      },
+      "nin_code": "4027"
+    },
+    {
+      "case_id": "nin-8040003-150g-vi",
+      "split": "development",
+      "language": "vi",
+      "text": "150g mực hấp",
+      "expected_items": [
+        {
+          "aliases": [
+            "steamed squid",
+            "Mực tươi, hấp"
+          ],
+          "quantity_g": 150
+        }
+      ],
+      "expected_calories_kcal": [
+        146.625,
+        198.375
+      ],
+      "expected_macros": {
+        "protein_g": 38.205,
+        "carbs_g": 0.0,
+        "fat_g": 2.115,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 23.445
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 11.01
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 2.82
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 32.82
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.41
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 77.34
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 639.84
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 103.125
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 0.84
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.015
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.135
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 2.115
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.135
+        },
+        "vitamin_b12": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 3.045
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 11.715
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 351.57
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.635
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 105.0
+        }
+      },
+      "nin_code": "8040003"
+    },
+    {
+      "case_id": "nin-7048002-100g-en",
+      "split": "development",
+      "language": "en",
+      "text": "100g boiled chicken gizzard",
+      "expected_items": [
+        {
+          "aliases": [
+            "boiled chicken gizzard",
+            "Mề gà, luộc"
+          ],
+          "quantity_g": 100
+        }
+      ],
+      "expected_calories_kcal": [
+        107.95,
+        146.05
+      ],
+      "expected_macros": {
+        "protein_g": 27.31,
+        "carbs_g": 0.77,
+        "fat_g": 1.67,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 24.36
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 2.37
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.34
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 61.54
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 8.46
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 19.23
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 303.85
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 88.46
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 0.68
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.04
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.21
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 4.92
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.11
+        },
+        "vitamin_b12": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 1.24
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 3.21
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 192.31
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 3.49
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 32.69
+        }
+      },
+      "nin_code": "7048002"
+    },
+    {
+      "case_id": "nin-4036002-100g-en",
+      "split": "held_out",
+      "language": "en",
+      "text": "100g boiled mung bean sprouts",
+      "expected_items": [
+        {
+          "aliases": [
+            "boiled mung bean sprouts",
+            "Giá đậu xanh, luộc"
+          ],
+          "quantity_g": 100
+        }
+      ],
+      "expected_calories_kcal": [
+        49.3,
+        66.7
+      ],
+      "expected_macros": {
+        "protein_g": 6.04,
+        "carbs_g": 8.02,
+        "fat_g": 0.22,
+        "fiber_g": 2.2,
+        "sugar_g": 4.54
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 1.1
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 6.04
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.11
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 41.76
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.54
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 18.22
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 180.23
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 25.3
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 0.05
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 36.26
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.14
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.11
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.58
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.06
+        },
+        "vitamin_b12": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 40.22
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 100.0
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.45
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.66
+        }
+      },
+      "nin_code": "4036002"
+    },
+    {
+      "case_id": "nin-5040-150g-vi",
+      "split": "development",
+      "language": "vi",
+      "text": "1 quả ổi chín 150g",
+      "expected_items": [
+        {
+          "aliases": [
+            "ripe guava",
+            "Ổi, quả chín, tươi"
+          ],
+          "quantity_g": 150
+        }
+      ],
+      "expected_calories_kcal": [
+        77.775,
+        105.225
+      ],
+      "expected_macros": {
+        "protein_g": 0.9,
+        "carbs_g": 19.41,
+        "fat_g": 1.14,
+        "fiber_g": 9.0,
+        "sugar_g": 13.38
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 46.755
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 93.0
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.095
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 15.0
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.95
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 33.0
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 436.5
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 6.0
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 0.405
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 3.9
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.075
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.06
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.65
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.165
+        },
+        "vitamin_b12": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 73.5
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 24.0
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 3.6
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.9
+        }
+      },
+      "nin_code": "5040"
+    },
+    {
+      "case_id": "nin-4010002-150g-en",
+      "split": "development",
+      "language": "en",
+      "text": "150g boiled cabbage",
+      "expected_items": [
+        {
+          "aliases": [
+            "boiled cabbage",
+            "Cải bắp, luộc"
+          ],
+          "quantity_g": 150
+        }
+      ],
+      "expected_calories_kcal": [
+        52.275,
+        70.725
+      ],
+      "expected_macros": {
+        "protein_g": 2.94,
+        "carbs_g": 11.415,
+        "fat_g": 0.495,
+        "fiber_g": 2.61,
+        "sugar_g": 5.835
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 8.835
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 36.765
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.24
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 78.255
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.8
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 21.39
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 308.97
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 46.14
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 0.03
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 97.83
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.06
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.06
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.45
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.09
+        },
+        "vitamin_b12": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 42.06
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 50.55
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.32
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 3.585
+        }
+      },
+      "nin_code": "4010002"
+    },
+    {
+      "case_id": "nin-9007-50g-vi",
+      "split": "held_out",
+      "language": "vi",
+      "text": "5 quả trứng cút luộc, 50g",
+      "expected_items": [
+        {
+          "aliases": [
+            "boiled quail eggs",
+            "Trứng chim cút"
+          ],
+          "quantity_g": 50
+        }
+      ],
+      "expected_calories_kcal": [
+        66.725,
+        90.275
+      ],
+      "expected_macros": {
+        "protein_g": 6.39,
+        "carbs_g": 1.445,
+        "fat_g": 5.235,
+        "fiber_g": 0.0,
+        "sugar_g": 0.205
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 150.265
+        },
+        "vitamin_c": {
+          "status": "masked",
+          "unit": "mg"
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.54
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 29.915
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.825
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 6.5
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 66.0
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 70.5
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 1.78
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.69
+        },
+        "vitamin_k": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.15
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.065
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.395
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.075
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.075
+        },
+        "vitamin_b12": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 52.85
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 113.0
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.735
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 16.0
+        }
+      },
+      "nin_code": "9007"
+    },
+    {
+      "case_id": "nin-7032002-150g-vi",
+      "split": "development",
+      "language": "vi",
+      "text": "150g chân giò lợn luộc",
+      "expected_items": [
+        {
+          "aliases": [
+            "boiled pork leg",
+            "Thịt chân giò lợn, luộc"
+          ],
+          "quantity_g": 150
+        }
+      ],
+      "expected_calories_kcal": [
+        293.25,
+        396.75
+      ],
+      "expected_macros": {
+        "protein_g": 23.55,
+        "carbs_g": 0.0,
+        "fat_g": 27.9,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 45.0
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.525
+        },
+        "vitamin_e": {
+          "status": "masked",
+          "unit": "mg"
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 36.0
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 3.15
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 30.0
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 472.5
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 70.5
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 9.81
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.015
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.075
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.92
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.48
+        },
+        "vitamin_b12": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.75
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 5.25
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 159.0
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 2.895
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 44.1
+        }
+      },
+      "nin_code": "7032002"
+    },
+    {
+      "case_id": "nin-7040002-50g-en",
+      "split": "development",
+      "language": "en",
+      "text": "50g boiled chicken liver",
+      "expected_items": [
+        {
+          "aliases": [
+            "boiled chicken liver",
+            "Gan gà, luộc"
+          ],
+          "quantity_g": 50
+        }
+      ],
+      "expected_calories_kcal": [
+        65.875,
+        89.125
+      ],
+      "expected_macros": {
+        "protein_g": 12.64,
+        "carbs_g": 1.39,
+        "fat_g": 2.36,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 2288.6
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 2.43
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.39
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 14.585
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 5.695
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 11.805
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 232.64
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 49.305
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 1.085
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.21
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.905
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 5.78
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.475
+        },
+        "vitamin_b12": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 9.21
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 204.165
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 180.555
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.855
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 37.915
+        }
+      },
+      "nin_code": "7040002"
+    },
+    {
+      "case_id": "nin-8020014-120g-en",
+      "split": "held_out",
+      "language": "en",
+      "text": "120g grilled scad fish (cá nục)",
+      "expected_items": [
+        {
+          "aliases": [
+            "grilled scad fish (cá nục)",
+            "Cá nục, nướng"
+          ],
+          "quantity_g": 120
+        }
+      ],
+      "expected_calories_kcal": [
+        140.76,
+        190.44
+      ],
+      "expected_macros": {
+        "protein_g": 30.3,
+        "carbs_g": 0.0,
+        "fat_g": 4.956,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 22.5
+        },
+        "vitamin_c": {
+          "status": "masked",
+          "unit": "mg"
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.852
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 127.5
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 4.872
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 61.5
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 574.5
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 156.0
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 1.92
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.156
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.072
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.348
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 18.936
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.192
+        },
+        "vitamin_b12": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.936
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 13.5
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 240.0
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 2.58
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 54.756
+        }
+      },
+      "nin_code": "8020014"
+    },
+    {
+      "case_id": "nin-8011-100g-vi",
+      "split": "development",
+      "language": "vi",
+      "text": "100g cá hồi sống sashimi",
+      "expected_items": [
+        {
+          "aliases": [
+            "raw salmon sashimi",
+            "Cá hồi, tươi"
+          ],
+          "quantity_g": 100
+        }
+      ],
+      "expected_calories_kcal": [
+        115.6,
+        156.4
+      ],
+      "expected_macros": {
+        "protein_g": 22.0,
+        "carbs_g": 0.0,
+        "fat_g": 5.3,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 30.0
+        },
+        "vitamin_c": {
+          "status": "masked",
+          "unit": "mg"
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.65
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 13.0
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.1
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 31.0
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 423.0
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 46.0
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 1.13
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 10.88
+        },
+        "vitamin_k": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.1
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.22
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.07
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 7.0
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.55
+        },
+        "vitamin_b12": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 9.0
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 230.0
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.41
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 36.5
+        }
+      },
+      "nin_code": "8011"
+    },
+    {
+      "case_id": "nin-7113002-150g-en",
+      "split": "development",
+      "language": "en",
+      "text": "150g boiled duck breast",
+      "expected_items": [
+        {
+          "aliases": [
+            "boiled duck breast",
+            "Thịt vịt, lườn, luộc"
+          ],
+          "quantity_g": 150
+        }
+      ],
+      "expected_calories_kcal": [
+        207.825,
+        281.175
+      ],
+      "expected_macros": {
+        "protein_g": 41.355,
+        "carbs_g": 0.0,
+        "fat_g": 8.85,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 33.33
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 6.465
+        },
+        "vitamin_e": {
+          "status": "masked",
+          "unit": "mg"
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 6.255
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 9.39
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 45.84
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 558.33
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 118.755
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 2.745
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.69
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.51
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 5.745
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.05
+        },
+        "vitamin_b12": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 1.26
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 26.04
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 387.495
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.545
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 28.965
+        }
+      },
+      "nin_code": "7113002"
+    },
+    {
+      "case_id": "nin-10035-100g-vi",
+      "split": "held_out",
+      "language": "vi",
+      "text": "1 hộp sữa chua có đường 100g",
+      "expected_items": [
+        {
+          "aliases": [
+            "sweetened yogurt",
+            "Sữa chua, đặc, có đường"
+          ],
+          "quantity_g": 100
+        }
+      ],
+      "expected_calories_kcal": [
+        55.25,
+        74.75
+      ],
+      "expected_macros": {
+        "protein_g": 3.3,
+        "carbs_g": 4.66,
+        "fat_g": 3.7,
+        "fiber_g": 0.0,
+        "sugar_g": 4.66
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 25.92
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.7
+        },
+        "vitamin_e": {
+          "status": "masked",
+          "unit": "mg"
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 120.0
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.1
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 12.0
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 155.0
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 46.0
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 2.1
+        },
+        "added_sugar": {
+          "status": "masked",
+          "unit": "g"
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.04
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.2
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.1
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.03
+        },
+        "vitamin_b12": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.37
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 7.0
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 95.0
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.59
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 2.2
+        }
+      },
+      "nin_code": "10035"
+    },
+    {
+      "case_id": "nin-4005-100g-vi",
+      "split": "development",
+      "language": "vi",
+      "text": "100g cà chua",
+      "expected_items": [
+        {
+          "aliases": [
+            "raw tomato",
+            "Quả cà chua, tươi"
+          ],
+          "quantity_g": 100
+        }
+      ],
+      "expected_calories_kcal": [
+        20.4,
+        27.6
+      ],
+      "expected_macros": {
+        "protein_g": 0.6,
+        "carbs_g": 4.77,
+        "fat_g": 0.23,
+        "fiber_g": 0.8,
+        "sugar_g": 2.63
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 58.67
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 40.0
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.54
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 12.0
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.4
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 15.0
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 275.2
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 12.2
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 0.05
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 7.9
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.06
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.04
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.5
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.08
+        },
+        "vitamin_b12": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 15.0
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 26.0
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.74
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.5
+        }
+      },
+      "nin_code": "4005"
+    },
+    {
+      "case_id": "nin-5037-100g-en",
+      "split": "development",
+      "language": "en",
+      "text": "100g sweet grapes",
+      "expected_items": [
+        {
+          "aliases": [
+            "sweet grapes",
+            "Nho ngọt, tươi"
+          ],
+          "quantity_g": 100
+        }
+      ],
+      "expected_calories_kcal": [
+        60.35,
+        81.65
+      ],
+      "expected_macros": {
+        "protein_g": 0.4,
+        "carbs_g": 16.99,
+        "fat_g": 0.11,
+        "fiber_g": 0.6,
+        "sugar_g": 15.48
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 3.29
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 3.0
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.19
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 17.0
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.6
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 7.0
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 191.0
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 2.0
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 0.05
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 14.6
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.06
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.04
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.2
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.09
+        },
+        "vitamin_b12": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 2.0
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 22.0
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.07
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.1
+        }
+      },
+      "nin_code": "5037"
+    },
+    {
+      "case_id": "nin-4015002-150g-en",
+      "split": "held_out",
+      "language": "en",
+      "text": "150g boiled bok choy",
+      "expected_items": [
+        {
+          "aliases": [
+            "boiled bok choy",
+            "Cải thìa (cải trắng), luộc"
+          ],
+          "quantity_g": 150
+        }
+      ],
+      "expected_calories_kcal": [
+        35.7,
+        48.3
+      ],
+      "expected_macros": {
+        "protein_g": 2.355,
+        "carbs_g": 7.41,
+        "fat_g": 0.33,
+        "fiber_g": 3.03,
+        "sugar_g": 1.995
+      },
+      "expected_micros": {
+        "vitamin_a": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 376.62
+        },
+        "vitamin_c": {
+          "status": "known",
+          "unit": "mg",
+          "value": 24.105
+        },
+        "vitamin_e": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.15
+        },
+        "calcium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 84.27
+        },
+        "iron": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.185
+        },
+        "magnesium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 42.72
+        },
+        "potassium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 337.08
+        },
+        "sodium": {
+          "status": "known",
+          "unit": "mg",
+          "value": 42.135
+        },
+        "saturated_fat": {
+          "status": "known",
+          "unit": "g",
+          "value": 0.045
+        },
+        "added_sugar": {
+          "status": "known",
+          "unit": "g",
+          "value": 0
+        },
+        "vitamin_d": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "vitamin_k": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 60.33
+        },
+        "thiamin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.105
+        },
+        "riboflavin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.09
+        },
+        "niacin": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.465
+        },
+        "vitamin_b6": {
+          "status": "known",
+          "unit": "mg",
+          "value": 0.195
+        },
+        "vitamin_b12": {
+          "status": "masked",
+          "unit": "mcg"
+        },
+        "folate": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 66.735
+        },
+        "phosphorus": {
+          "status": "known",
+          "unit": "mg",
+          "value": 50.565
+        },
+        "zinc": {
+          "status": "known",
+          "unit": "mg",
+          "value": 1.26
+        },
+        "selenium": {
+          "status": "known",
+          "unit": "mcg",
+          "value": 0.84
+        }
+      },
+      "nin_code": "4015002"
+    }
+  ]
+}

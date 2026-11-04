@@ -48,7 +48,9 @@ def ai_job_error_code(exc: BaseException) -> str:
         return _VISION_CODES.get(exc.kind, "AI_UNAVAILABLE")
     if isinstance(exc, VisionResponseParsingError):
         return "AI_OUTPUT_INVALID"
-    # handle_exception reports timeouts as AI_UNAVAILABLE; jobs keep them apart.
+    # A builtin TimeoutError here is an AI deadline. Sync routes call that
+    # AI_UNAVAILABLE; jobs keep the deadline distinct as AI_TIMEOUT. A database
+    # connect failure is DatabaseUnavailableError and is not a TimeoutError.
     if isinstance(exc, TimeoutError):
         return "AI_TIMEOUT"
     if not isinstance(exc, Exception):

@@ -487,16 +487,16 @@ class TestGetStreakQueryHandlerCache:
         )
         from src.app.queries.meal.get_streak_query import GetStreakQuery
 
-        cached = {"current_streak": 5, "best_streak": 10}
+        cached = {"current_streak": 5, "best_streak": 10, "intake_revision": 3}
         cache_service = MagicMock()
-        cache_service.get_json = AsyncMock(return_value=cached)
+        cache_service.get_json_with_revision = AsyncMock(return_value=(cached, 3))
         cache_service.set_json = AsyncMock()
 
         handler = GetStreakQueryHandler(cache_service=cache_service)
         query = GetStreakQuery(user_id="u1")
         result = await handler.handle(query)
 
-        assert result == cached
+        assert result == {"current_streak": 5, "best_streak": 10}
         cache_service.set_json.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -508,13 +508,24 @@ class TestGetStreakQueryHandlerCache:
 
         db_result = {"current_streak": 3, "best_streak": 7}
         cache_service = MagicMock()
-        cache_service.get_json = AsyncMock(return_value=None)
+        cache_service.get_json_with_revision = AsyncMock(return_value=(None, 3))
         cache_service.set_json = AsyncMock()
 
         handler = GetStreakQueryHandler(cache_service=cache_service)
         query = GetStreakQuery(user_id="u1")
 
-        with patch.object(handler, "_compute", AsyncMock(return_value=db_result)):
+        from datetime import UTC, datetime
+
+        state = MagicMock(
+            timezone="UTC", computed_at=datetime(2026, 10, 28, 9, 0, tzinfo=UTC)
+        )
+        with (
+            patch.object(handler, "_load", AsyncMock(return_value=state)),
+            patch(
+                "src.app.handlers.query_handlers.get_streak_query_handler.streak_payload",
+                return_value=db_result,
+            ),
+        ):
             result = await handler.handle(query)
 
         assert result == db_result
@@ -583,6 +594,9 @@ class TestGetUserMetricsQueryHandlerCache:
             "user_id": "u1",
             "weight_kg": 75.0,
             "target_weight_kg": 65.0,
+            "date_of_birth": None,
+            "allergies": [],
+            "health_conditions": [],
             "profile_target_revision": 1,
         }
         cache_service = MagicMock()

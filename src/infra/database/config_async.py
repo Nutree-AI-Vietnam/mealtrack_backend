@@ -2,17 +2,22 @@
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
+from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+import asyncpg
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 
+from src.domain.exceptions.database_exceptions import DatabaseUnavailableError
 from src.infra.database.connection_policy import (
     DatabaseConnectionPolicy,
     resolve_connection_policy,
 )
 from src.infra.database.planner_pool import PlannerNullPool, PlannerQueuePool
+from src.infra.monitoring.sentry import add_connect_retry_breadcrumb
 
 load_dotenv()
 
@@ -76,6 +81,63 @@ def _normalize_asyncpg_url(raw_url: str) -> str:
     return raw_url
 
 
+def _record_connect_retry(error_type: str) -> None:
+    """Log one connect retry. No exception text and no connect arguments."""
+    logger.warning(
+        "Database connect attempt failed (%s); retrying once",
+        error_type,
+    )
+    add_connect_retry_breadcrumb(error_type)
+
+
+async def connect_with_one_retry(
+    connect: Callable[..., Awaitable[Any]],
+    /,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """Open a driver connection, retrying once if the handshake fails.
+
+    ``connect`` is the driver entry point (``asyncpg.connect``). It returns
+    only after TCP/TLS and startup succeed, and before any application
+    statement, so a retry cannot run a write twice. ``TimeoutError`` is an
+    ``OSError``. The second failure is ``DatabaseUnavailableError``, chained
+    from the driver error, so a connect timeout is not reported as an AI
+    timeout. The Sentry breadcrumb import is module-level: an import failure
+    must not replace this driver error.
+    """
+    try:
+        return await connect(*args, **kwargs)
+    except OSError as exc:
+        _record_connect_retry(type(exc).__name__)
+        try:
+            return await connect(*args, **kwargs)
+        except OSError as retry_exc:
+            raise DatabaseUnavailableError() from retry_exc
+
+
+async def _retrying_asyncpg_connect(*args: Any, **kwargs: Any) -> Any:
+    return await connect_with_one_retry(asyncpg.connect, *args, **kwargs)
+
+
+def build_async_connect_args(
+    policy: DatabaseConnectionPolicy,
+    url_connect_args: dict | None = None,
+) -> dict:
+    """Connect kwargs for every async engine.
+
+    Callers are the app engine in this module (``PlannerQueuePool`` and
+    ``PlannerNullPool``) and the catalog worker engine. Pooler mode attaches
+    the one-shot connect retry here so those engines cannot drift.
+    """
+    connect_args = {**(url_connect_args or {}), **policy.connect_args}
+    if policy.mode == "neon_pooler":
+        # SQLAlchemy pops this and calls it with the remaining connect kwargs,
+        # including timeout. It replaces only asyncpg.connect, not statements.
+        connect_args["async_creator_fn"] = _retrying_asyncpg_connect
+    return connect_args
+
+
 # Resolve connection policy from environment.
 # URL priority: APP_DATABASE_URL > DATABASE_URL > component fallback.
 # DATABASE_URL_DIRECT is reserved for migration tooling; it is NOT used here.
@@ -87,9 +149,9 @@ ASYNC_DATABASE_URL, _url_connect_args = _sanitize_asyncpg_url_and_connect_args(
     ASYNC_DATABASE_URL
 )
 
-# Merge connect_args: url-level (ssl from sslmode) first, then policy-level
-# (prepared_statement_cache_size=0 for pooler) so policy settings take precedence.
-_connect_args = {**_url_connect_args, **_policy.connect_args}
+# URL-level kwargs (ssl from sslmode) first, then policy-level, so policy
+# settings take precedence. The same helper feeds the worker engine.
+_connect_args = build_async_connect_args(_policy, _url_connect_args)
 
 # Expose connection mode for health endpoint and observability
 CONNECTION_MODE = _policy.mode
@@ -202,7 +264,11 @@ def _caller_was_cancelled() -> bool:
     return current is not None and current.cancelling() > 0
 
 
-async def close_async_session(session: AsyncSession) -> None:
+async def close_async_session(
+    session: AsyncSession,
+    *,
+    before_close: Callable[[], Awaitable[None]] | None = None,
+) -> None:
     """Close a session even when the request task is already cancelled.
 
     Chat does not use ``get_async_db``. Its sessions are closed from
@@ -211,11 +277,28 @@ async def close_async_session(session: AsyncSession) -> None:
     terminating the connection, which logs "Exception terminating connection"
     and drops the cleanup (PYTHON-HP).
 
+    ``AsyncUnitOfWork`` rollback also returns the connection.
+    ``PlannerNullPool`` then closes it gracefully (``do_close``, not
+    terminate). Doing that on the cancelled request logs "Exception closing
+    connection" (PYTHON-KK). ``before_close`` therefore runs in the same
+    shielded task as ``session.close``. A successful commit does not: this
+    wait is capped at ``SESSION_CLOSE_TIMEOUT_SECONDS``, and a timeout
+    returns without raising.
+
     The close runs on a shielded task with a strong reference. The wait is
     bounded so a hung close cannot hold the request. ``CancelledError`` is
-    re-raised when the caller was cancelled.
+    re-raised when the caller was cancelled. A real cleanup failure is still
+    logged when the caller is no longer waiting for it.
     """
-    close_task = asyncio.create_task(session.close())
+
+    async def _cleanup() -> None:
+        try:
+            if before_close is not None:
+                await before_close()
+        finally:
+            await session.close()
+
+    close_task = asyncio.create_task(_cleanup())
     wait = _CloseWait()
     _CLOSING_SESSIONS.add(close_task)
     _CLOSE_WAITS[close_task] = wait

@@ -66,6 +66,46 @@ MACRO_ACCURACY_RULES = (
 )
 
 # =============================================================================
+# HEALTHY + EASY RULES — the only two things every generated dish must be
+# =============================================================================
+# One line for the naming phase, where the whole prompt is ~200 tokens.
+HEALTHY_EASY_RULE_LINE = (
+    "Healthy home cooking: whole foods, no deep-frying, "
+    "no processed meat, everyday ingredients."
+)
+
+# The full version for the recipe phase, where we can afford the detail.
+HEALTHY_EASY_RULES = (
+    "HEALTHY AND EASY (MANDATORY):\n"
+    "- Build the dish from whole foods: vegetables, whole grains, legumes, "
+    "fruit, plus lean meat, fish, eggs, tofu or beans\n"
+    "- Cook by grilling, steaming, boiling, stir-frying or baking "
+    "— never deep-fry, and keep added oil under 15g\n"
+    "- No processed meat (sausage, ham, bacon, luncheon meat), "
+    "no sugary drinks or desserts\n"
+    "- Everyday ingredients a home cook already has, one pan or pot, "
+    "no special equipment\n"
+)
+
+# How long a dish may take when the caller did not say. Breakfast is the one
+# people skip when it is hard, so it gets the tightest budget.
+DEFAULT_COOKING_MINUTES: dict[str, int] = {
+    "breakfast": 15,
+    "snack": 10,
+    "lunch": 30,
+    "dinner": 30,
+}
+FALLBACK_COOKING_MINUTES = 30
+
+
+def default_cooking_minutes(meal_type: str) -> int:
+    """Minutes a dish of this meal type may take when nobody set a limit."""
+    return DEFAULT_COOKING_MINUTES.get(
+        (meal_type or "").strip().lower(), FALLBACK_COOKING_MINUTES
+    )
+
+
+# =============================================================================
 # DECOMPOSITION RULES — enforce ingredient-level breakdown
 # =============================================================================
 DECOMPOSITION_RULES = (

@@ -235,6 +235,7 @@ Architecture guardrails enforced by `tests/unit/architecture/test_logging_owners
 | User | User, UserProfile, Activity, TdeeRequest, weight history |
 | Hydration | Hydration entries, drink catalog, caloric drink logging |
 | Movement | Movement entries, activity catalog, daily movement summaries |
+| Supplements | Products (curated, scanned, estimated) and their barcodes, the person's list, dose intakes |
 | Progress | Journey progress snapshot, active-period filtering, action scoring |
 | Meal Planning | Weekly budget, weekly meal plans, catalog recipe detail, groceries, meal suggestion, saved suggestion models |
 | Notification | UserFcmToken, NotificationPreferences, PushNotification, queued notification rows |
@@ -248,6 +249,36 @@ owned by the backend (AGENTS MUST-Follow). Exception: when a meal-level or
 ingredient-level `NutritionOverride` is set, the backend presents the absolute
 override values (including calories) until cleared. Source macros remain
 available for restore. HTTP shape: `api-endpoints.md`.
+
+### Supplements: micros only, never calories
+
+Supplements live in their own tables (`supplement_products`,
+`supplement_product_barcodes`, `user_supplements`, `supplement_intakes`); a dose
+is never a meal row. Doses carry no calories or macros, so the weekly budget,
+calories-from-macros and meal counts are untouched. Their vitamins and minerals
+join the day: Home's day micros and highlights, `/v1/meals/daily/macros`
+(`supplement_micros`) and the Trends day fields. Supplement folate is stored as
+µg DFE, and preformed vitamin A is kept apart for its own upper limit.
+
+- **Visibility.** Product search, barcode and id reads return shared approved
+  products or your own; your history also reads products already on your list
+  or in your doses. A label scan stays private until an admin promotes it
+  ([supplement-catalog-admin.md](./supplement-catalog-admin.md)); admin review
+  reads see every row.
+- **Estimates.** A Ghi nhanh sentence that names an unknown supplement saves the
+  model's estimate as the person's private product, marked estimated, and it
+  never reaches the catalog. It counts in the day's totals but never toward a
+  limit gauge (sodium); the server reports the estimated part apart
+  (`supplement_estimated_micros`), so the app can keep it out of upper-limit
+  warnings. The app replaces the estimate when the person scans its label.
+- **Streak.** A day with only a dose counts as a logged day, like water.
+- **Gate.** Every `/v1/supplements` route answers 503 until `SUPPLEMENTS_ENABLED`
+  is on and the tables exist, and `/v1/log/describe` skips supplement items
+  until then. Admin catalog routes need only the tables. Reads (day totals,
+  Trends, streak, recap, day feed) count stored doses whenever the tables
+  exist, so the switch gates writes, not totals. Account deletion removes
+  doses, list rows and unpromoted products, and checks the schema first
+  because a deploy can run before its migration.
 
 ### Meal scan vs hydration
 
@@ -335,13 +366,32 @@ the [catalog rollout runbook](./runbooks/meal-catalog-release.md#weekly-planner-
 3. `EventBus.send()` calls `UploadMealImageImmediatelyHandler`.
 4. Handler uploads to Cloudinary, runs `VisionAIService`, parses nutrition, and persists a READY `Meal(source="scanner")` with **no hydration side effects**.
 5. If `AI_MEAL_ANALYZE_GRAPH_ENABLED=true`, the handler enters `MealAnalyzeWorkflow`; the app-layer graph owns image acquisition, vision parsing, persistence, generic cache invalidation publication, and Worker insight-event publication.
-6. If `AI_MEAL_ANALYZE_FATSECRET_VALIDATION_ENABLED=true`, optional reference validation may run after meal creation. Provider timeout or mismatch keeps the original meal result.
+6. If `AI_MEAL_SCAN_REFERENCE_GROUNDING_ENABLED=true`, scan items take macros from the shared cascade (local food reference, then FatSecret, otherwise the vision estimate). A provider timeout keeps the vision macros as `ai_estimate`. If that flag is off and `AI_MEAL_ANALYZE_FATSECRET_VALIDATION_ENABLED=true`, the older closeness audit may still run after meal creation and does not replace macros. Provider timeout or mismatch keeps the original meal result.
+   `AI_SCAN_FULL_MICROS_ENABLED=true` (default off) asks photo, label and text logging for all 21 micronutrient keys instead of ten (`src/domain/model/ai/full_micros_contracts.py`, `SystemPrompts.with_full_micros`); off sends today's ten-key contract and prompts unchanged. Parsers always accept the 21-key superset, and a missing key stays unknown.
 7. Meal value insight publication is best-effort after persistence. The Worker generates and caches the result under `meal_insight:{meal_id}`; the backend only reads that cache, re-requests an overdue insight from the status endpoint, and never blocks the READY meal response on AI completion.
 8. Handler returns `DetailedMealResponse` synchronously.
 
 `POST /v1/meals/scan-by-url` follows the same synchronous workflow after
 downloading Cloudinary bytes. Graph nodes must not import provider SDKs,
 `sentry_sdk`, SQLAlchemy, API-layer services, or domain-internal vendor code.
+
+## Data Flow Example: One Ghi nhanh Sentence For Every Kind
+
+1. `POST /v1/log/describe` takes a sentence, a `request_id` and the person's
+   local date and time; `kinds` limits what it may log. A finished
+   `request_id` replays first; otherwise the Ghi nhanh switch, Premium and the
+   daily quota are checked.
+2. A read step asks the model which meals, drinks, activities and doses the
+   sentence holds (food needs a second call, so a sentence with food can take
+   about 20 s).
+3. One save transaction writes all of them through the meal, hydration,
+   movement and supplement writers; a sentence never saves half.
+4. `describe_log_replay.run_once` keys the reply on `request_id`, so a retry
+   replays it instead of saving twice.
+5. `DELETE /v1/log/describe/{request_id}` deletes everything the sentence saved
+   in one transaction and puts the supplement list back as it was (a dose the
+   person already deleted by hand is left as is). An estimated product the
+   sentence created stays as an unlisted private product.
 
 ## Data Flow Example: Food-Label Scan By URL
 
@@ -353,14 +403,17 @@ downloading Cloudinary bytes. Graph nodes must not import provider SDKs,
 6. `VisionResponseParser` maps validated label data into `Nutrition` and `food_label_metadata`.
 7. Handler persists a READY `Meal(source="food_label")`, invalidates meal caches, and does not create hydration side effects.
 
-## Data Flow Example: Meal Recommendation Plan
+## Meal catalog
 
-1. `POST /v1/meal-recommendations/three-day` resolves timezone and daily calories, then builds or replays a durable recommendation plan.
-2. The plan-level response is compact: it includes only the selected slots, with ingredients for each selected meal. Alternatives, scores, and full meal-detail fields stay out of the summary payload.
-3. `GET /v1/meal-recommendations/{plan_id}/slots/{slot_id}` hydrates one selected slot and its alternatives when the client needs drill-down data.
-4. `swap`, `log`, and `skip` return the changed-slot detail shape so the mobile client can patch its cached plan without reloading everything.
-5. Recommendation analytics are scheduled through `BackgroundTaskManager` when available. Catalog meals are read from the process-local snapshot service with revision-aware TTL, single-flight refresh, and last-good fallback. Meal-history affinity is projected from aggregate linked ingredient buckets instead of loading the full meal graph, and logging a recommended meal reuses the already loaded selected catalog projection without fabricating image data. Translation persistence and remaining-slot recalculation are post-commit secondary jobs. The current plan-creation endpoint still returns generated content synchronously; moving generation itself to a durable job requires a status/accepted-response contract.
-6. Candidate rows retain `seen_at` and `retired_at`. Swap locks only the requested slot, consumes unseen active candidates, and when exhausted retires that slot's inactive pool before inserting five deterministic fresh alternatives. Replenishment never mutates another slot or changes the response contract; daily jobs remain out of scope.
+The catalog is a read-only knowledge base of crawled, reviewed recipes. It is
+read through `/v1/meal-catalog` for browsing and by the weekly planner as
+reference material; it is not itself a plan. Catalog meals are read from the
+process-local snapshot service with revision-aware TTL, single-flight refresh
+and last-good fallback. Meal-history affinity is projected from aggregate
+linked ingredient buckets rather than loading the full meal graph.
+
+Logging a catalog meal writes a diary meal directly; it does not open or close
+a plan slot. The week in `/v1/meal-plans/*` is the only plan.
 
 ---
 

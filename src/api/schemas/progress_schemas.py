@@ -4,7 +4,25 @@ Pydantic response schemas for progress screen endpoints.
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+
+def _trends_only() -> Any:
+    """A field that is left out of the JSON when unset, so old payloads keep their shape."""
+    return Field(None, exclude_if=lambda value: value is None)
+
+
+class StreakRestoreState(BaseModel):
+    """Restores the user holds and the missed days they can still restore."""
+
+    balance: int  # paid restores; the app shows balance + 1 while free_available
+    free_available: bool
+    missed_dates: list[str] = []  # YYYY-MM-DD; empty means nothing to restore
+    restorable_until: str | None = None  # YYYY-MM-DD, last day of the offer
+    broken_streak: int = 0  # logged days of the run the missed days broke
+    restored_dates: list[str] = []  # restored days of the last 14, YYYY-MM-DD
 
 
 class StreakResponse(BaseModel):
@@ -14,6 +32,7 @@ class StreakResponse(BaseModel):
     best_streak: int
     last_logged_date: str | None = None  # YYYY-MM-DD, None if never logged
     scan_count: int = 0  # total meals created via scanner
+    restore: StreakRestoreState | None = None
 
 
 class DailyBreakdownEntry(BaseModel):
@@ -75,6 +94,14 @@ class JourneyProgressResponse(BaseModel):
     is_week_over_budget: bool = False
 
 
+class MealQualityCounts(BaseModel):
+    """Rated meals of the day by score band: good >= 70, fair 50-69, low < 50."""
+
+    good: int = 0
+    fair: int = 0
+    low: int = 0
+
+
 class ProgressSummaryDay(BaseModel):
     """One calendar day in GET /v1/progress/summary."""
 
@@ -102,6 +129,29 @@ class ProgressSummaryDay(BaseModel):
     potassium_mg: float | None = None
     sodium_mg: float | None = None
     added_sugar_g: float | None = None
+    # Sent only with include=trends; absent, not null, otherwise.
+    micros: dict[str, float] | None = _trends_only()
+    micro_meal_counts: dict[str, int] | None = _trends_only()
+    meal_quality_counts: MealQualityCounts | None = _trends_only()
+    quality_by_meal_type: dict[str, float] | None = _trends_only()
+    movement_minutes: int | None = _trends_only()
+    movement_sessions: int | None = _trends_only()
+    movement_load: float | None = _trends_only()
+    movement_kinds: list[str] | None = _trends_only()
+    # The doses' share of ``micros`` (estimates included), the part from Ghi
+    # nhanh estimates, preformed vitamin A (µg) from non-estimated doses, and
+    # the dose count. Supplement folate is µg DFE (folic acid x 1.7).
+    supplement_micros: dict[str, float] | None = _trends_only()
+    supplement_estimated_micros: dict[str, float] | None = _trends_only()
+    supplement_vitamin_a_preformed: float | None = _trends_only()
+    supplement_doses: int | None = _trends_only()
+
+
+class MicroUpperLimit(BaseModel):
+    """Tolerable upper intake; scope says which intake it covers."""
+
+    value: float
+    scope: str  # all_sources | supplements_only | preformed_only
 
 
 class ProgressSummaryResponse(BaseModel):
@@ -111,6 +161,9 @@ class ProgressSummaryResponse(BaseModel):
     effective_end: str
     cap_days: int
     days: list[ProgressSummaryDay]
+    goals_revision: int | None = _trends_only()
+    micro_goals: dict[str, float] | None = _trends_only()
+    micro_upper_limits: dict[str, MicroUpperLimit] | None = _trends_only()
 
 
 class ProgressRecapHighlight(BaseModel):

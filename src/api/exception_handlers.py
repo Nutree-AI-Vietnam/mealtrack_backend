@@ -19,11 +19,13 @@ from src.api.exceptions import (
     content_rejected_http_exception,
     create_http_exception,
     handle_exception,
+    recipe_import_http_exception,
 )
 from src.domain.exceptions.ai_exceptions import (
     AIContentRejectedError,
     AIUnavailableError,
 )
+from src.domain.exceptions.recipe_import_exceptions import RecipeImportError
 from src.domain.services.nutrition_calculation_service import (
     AuthoritativeUnitMismatchError,
 )
@@ -76,6 +78,17 @@ async def _ai_content_rejected_handler(
 ) -> JSONResponse:
     """User input refused by the provider's safety filter — 422, no ERROR."""
     http_exc = content_rejected_http_exception(exc)
+    return JSONResponse(
+        status_code=http_exc.status_code,
+        content={"detail": http_exc.detail},
+    )
+
+
+async def _recipe_import_handler(
+    request: Request, exc: RecipeImportError
+) -> JSONResponse:
+    """Expected recipe-import outcome (bad link, not a recipe) — no ERROR."""
+    http_exc = recipe_import_http_exception(exc)
     return JSONResponse(
         status_code=http_exc.status_code,
         content={"detail": http_exc.detail},
@@ -148,6 +161,11 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(
         AIContentRejectedError,
         _ai_content_rejected_handler,  # type: ignore[arg-type]
+    )
+
+    app.add_exception_handler(
+        RecipeImportError,
+        _recipe_import_handler,  # type: ignore[arg-type]
     )
 
     # Nutrition trust-boundary failures are expected request/provider outcomes.

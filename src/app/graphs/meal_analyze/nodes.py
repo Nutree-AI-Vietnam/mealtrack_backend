@@ -1,6 +1,8 @@
 """Nodes for the meal image analysis graph."""
 
 import asyncio
+import hashlib
+import json
 import logging
 
 from src.api.exceptions import ValidationException
@@ -17,6 +19,7 @@ from src.app.graphs.meal_analyze.runtime import AcquiredImage, MealAnalyzeRuntim
 from src.app.graphs.meal_analyze.state import MealAnalyzeGraphState
 from src.app.services.cancellation import run_to_completion
 from src.app.services.food_label_localizer import localize_food_label_display
+from src.app.services.food_reference_validation_service import ValidationReport
 from src.domain.constants import MealDefaults
 from src.domain.exceptions.ai_exceptions import (
     AIVisionError,
@@ -36,10 +39,13 @@ from src.domain.strategies.meal_analysis_strategy import (
     FoodLabelImageAnalysisStrategy,
 )
 from src.domain.utils.image_compression import (
+    VISION_JPEG_QUALITY,
+    VISION_MAX_DIM,
     to_compressed_image_url,
 )
 from src.domain.utils.timezone_utils import (
     get_zone_info,
+    is_same_day_log,
     is_valid_timezone,
     noon_utc_for_date,
     user_today,
@@ -47,6 +53,23 @@ from src.domain.utils.timezone_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+NUTRITION_AUDIT_EVENT = "meal_scan.nutrition_audit"
+_HIGH_CONFIDENCE = 0.8
+_REVIEW_CONFIDENCE = 0.5
+_AUDIT_SOURCES = frozenset(
+    {
+        "vision",
+        "food_label",
+        "local",
+        "fatsecret",
+        "openfoodfacts",
+        "provider",
+        "usda",
+        "custom",
+    }
+)
+_SCAN_SOURCES = frozenset({"scanner", "food_label"})
 
 
 def prepare_input(state: MealAnalyzeGraphState) -> MealAnalyzeGraphState:
@@ -131,6 +154,8 @@ async def _acquire_scan_by_url_image(
         if is_food_label
         else to_compressed_image_url(
             source_url,
+            max_dim=VISION_MAX_DIM,
+            quality=str(VISION_JPEG_QUALITY),
             custom_domain=runtime.cloudflare_custom_domain,
             flexible_variants_enabled=runtime.cloudflare_flexible_variants_enabled,
         )
@@ -373,6 +398,15 @@ async def maybe_validate_reference(
     runtime: MealAnalyzeRuntime,
 ) -> MealAnalyzeGraphState:
     """Run optional nutrition reference validation for meal scans only."""
+    if runtime.reference_grounding_enabled:
+        if runtime.food_reference_validation_service is None:
+            return {"reference_validated": False}
+        if (
+            isinstance(runtime.command, ScanByUrlCommand)
+            and runtime.command.scan_mode == "food_label"
+        ):
+            return {"reference_validated": False}
+        return {"reference_grounding_pending": True}
     if not runtime.fatsecret_validation_enabled:
         return {"reference_validated": False}
     if runtime.food_reference_validation_service is None:
@@ -400,7 +434,9 @@ async def persist_meal(
         raise RuntimeError("Parser and UoW dependencies are required for persistence")
 
     command = runtime.command
-    meal_datetime, meal_date, meal_type = await _resolve_meal_datetime(runtime)
+    meal_datetime, meal_date, meal_type, logged_on_day = await _resolve_meal_datetime(
+        runtime
+    )
     runtime.meal_date = meal_date
 
     is_food_label = (
@@ -411,13 +447,26 @@ async def persist_meal(
         meal_datetime=meal_datetime,
         meal_type=meal_type,
         is_food_label=is_food_label,
+        logged_on_day=logged_on_day,
     )
 
+    validation_report: ValidationReport | None = None
     if (
+        state.get("reference_grounding_pending")
+        and runtime.food_reference_validation_service is not None
+    ):
+        validation_report = await runtime.food_reference_validation_service.ground_meal(
+            meal
+        )
+        meal = validation_report.meal
+    elif (
         state.get("reference_validation_pending")
         and runtime.food_reference_validation_service is not None
     ):
-        meal = await runtime.food_reference_validation_service.validate_meal(meal)
+        validation_report = (
+            await runtime.food_reference_validation_service.validate_meal(meal)
+        )
+        meal = validation_report.meal
 
     if not is_food_label:
         meal = persist_meal_response_localization(meal, runtime.localization)
@@ -437,6 +486,7 @@ async def persist_meal(
                 event_bus=runtime.event_bus,
                 source="meal_analyze_graph",
             )
+        _emit_nutrition_audit(saved, validation_report)
         return saved
 
     # Saving and publishing finish together even if the caller is cancelled
@@ -469,7 +519,11 @@ async def _resolve_meal_datetime(runtime: MealAnalyzeRuntime):
 
     zone_info = get_zone_info(user_timezone)
     meal_type = determine_meal_type_from_timestamp(meal_datetime.astimezone(zone_info))
-    return meal_datetime, meal_date, meal_type
+    # Judged at the request's arrival, not now: analysis can end past midnight.
+    logged_on_day = is_same_day_log(
+        command.target_date, user_timezone, command.received_at
+    )
+    return meal_datetime, meal_date, meal_type, logged_on_day
 
 
 def _build_ready_meal(
@@ -478,6 +532,7 @@ def _build_ready_meal(
     meal_datetime,
     meal_type: str,
     is_food_label: bool,
+    logged_on_day: bool,
 ) -> Meal:
     acquired = runtime.acquired_image
     command = runtime.command
@@ -513,4 +568,103 @@ def _build_ready_meal(
         raw_gpt_json=runtime.gpt_parser.extract_raw_json(runtime.vision_result),
         food_label_metadata=runtime.label_metadata if is_food_label else None,
         nutrition=runtime.nutrition,
+        logged_on_day=logged_on_day,
     )
+
+
+def _emit_nutrition_audit(meal: Meal, report: ValidationReport | None) -> None:
+    """One JSON line per saved scan. The user id is hashed; food text stays out."""
+    logger.info(
+        json.dumps(
+            _nutrition_audit_payload(meal, report),
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    )
+
+
+def _nutrition_audit_payload(meal: Meal, report: ValidationReport | None) -> dict:
+    food_items = _food_items(meal)
+    buckets = {"high": 0, "review": 0, "low": 0}
+    for item in food_items:
+        buckets[_confidence_bucket(getattr(item, "confidence", None))] += 1
+    user_id = meal.user_id if isinstance(meal.user_id, str) else ""
+    scan_source = meal.source if meal.source in _SCAN_SOURCES else "unknown"
+    meal_score = None
+    if meal.nutrition is not None:
+        meal_score = getattr(meal.nutrition, "confidence_score", None)
+    return {
+        "event": NUTRITION_AUDIT_EVENT,
+        "meal_id": meal.meal_id if isinstance(meal.meal_id, str) else None,
+        "user_id_hash": (
+            hashlib.sha256(user_id.encode("utf-8")).hexdigest() if user_id else None
+        ),
+        "scan_source": scan_source,
+        "confidence_buckets": buckets,
+        "meal_confidence_bucket": _confidence_bucket(meal_score),
+        "item_sources": _item_sources(meal, food_items, report),
+        "validation": (
+            report.to_audit_dict()
+            if report is not None
+            else {
+                "outcome": "skipped",
+                "reason_code": "not_run",
+                "error_type": None,
+                "items": [],
+            }
+        ),
+    }
+
+
+def _food_items(meal: Meal) -> list:
+    nutrition = getattr(meal, "nutrition", None)
+    items = getattr(nutrition, "food_items", None)
+    if not isinstance(items, list):
+        return []
+    return items
+
+
+def _item_sources(
+    meal: Meal,
+    food_items: list,
+    report: ValidationReport | None,
+) -> list[dict[str, str]]:
+    matched = {
+        item.item_id: item.source
+        for item in (report.items if report is not None else ())
+        if item.outcome == "match" and item.source in _AUDIT_SOURCES
+    }
+    default_source = "food_label" if meal.source == "food_label" else "vision"
+    sources: list[dict[str, str]] = []
+    for item in food_items:
+        item_id = getattr(item, "id", None)
+        if not isinstance(item_id, str):
+            continue
+        source_kind = getattr(item, "source_kind", None)
+        if item_id in matched:
+            source = matched[item_id]
+        elif isinstance(source_kind, str) and source_kind in _AUDIT_SOURCES:
+            source = source_kind
+        else:
+            source = default_source
+        sources.append(
+            {
+                "item_id": item_id,
+                "source": source,
+                "confidence_bucket": _confidence_bucket(
+                    getattr(item, "confidence", None)
+                ),
+            }
+        )
+    return sources
+
+
+def _confidence_bucket(value: object) -> str:
+    """Bucket a 0-1 score. 0.8 is the scan review threshold."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "low"
+    if value >= _HIGH_CONFIDENCE:
+        return "high"
+    if value >= _REVIEW_CONFIDENCE:
+        return "review"
+    return "low"

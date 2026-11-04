@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import re
 import unicodedata
 from collections import Counter
-from dataclasses import dataclass
-from datetime import date
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
+from datetime import date, timedelta
 from time import monotonic
 
 from pydantic import ValidationError
 
 from src.api.exceptions import (
+    BusinessLogicException,
     ConflictException,
     ExternalServiceException,
     ResourceNotFoundException,
@@ -29,29 +33,60 @@ from src.domain.exceptions.weekly_meal_planner_exceptions import (
 )
 from src.domain.model.weekly_meal_planner import (
     WEEKLY_SLOTS_PER_DAY,
+    SavedRecipeSnapshot,
     WeeklyMealPlan,
     WeeklyMealPlanAdjustmentProposal,
     WeeklyMealPlanPreferences,
     WeeklyMealPlanSlotAdjustment,
 )
+from src.domain.model.weekly_meal_planner.meal_locale import (
+    DEFAULT_LOCALE,
+    MealLocale,
+    locale_for_timezone,
+)
+from src.domain.model.weekly_meal_planner.user_food_memory import (
+    EMPTY_MEMORY,
+    LoggedMealShape,
+    UserFoodMemory,
+    build_user_food_memory,
+)
+from src.domain.services.meal_recommendation.ingredient_affinity_service import (
+    IngredientAffinityService,
+)
 from src.domain.services.weekly_meal_planner import WeeklyPlanGenerationService
 from src.domain.services.weekly_meal_planner.allergen_constraint import (
     resolve_allergen_preferences,
+    resolve_allergen_terms,
 )
 from src.domain.services.weekly_meal_planner.grocery_projection import (
     DerivedGroceryItem,
+    fresh_ingredient_id,
 )
 from src.domain.services.weekly_meal_planner.slot_rules import (
     ensure_base_revision,
     ensure_slot_coordinate,
 )
+from src.domain.services.weekly_meal_planner.weekly_plan_generation_service import (
+    DayTargets,
+    compose_day,
+)
 from src.domain.utils.fingerprint_utils import canonicalize_fingerprint
 from src.planner_observability import planner_phase, planner_timed
+
+logger = logging.getLogger(__name__)
 from src.planner_request_policy import (
     planner_deadline,
     planner_retry_budget,
     remaining_budget,
 )
+
+# Fresh ingredient ids per recipe, for the catalog ingredient version they
+# were read at. One process-wide copy: the catalog changes rarely.
+_basket_ids_cache: tuple[tuple[int, int], Mapping[str, frozenset[int]]] | None = None
+# Compact generation keeps logged slots in place. A logged saved recipe has
+# no catalog id, so it is passed under this prefix: never a catalog id, so it
+# feeds no leftover lunch and adds nothing to the basket.
+_SAVED_FIXED_PREFIX = "saved:"
 
 
 @dataclass(frozen=True)
@@ -73,15 +108,32 @@ class WeeklyMealPlanService:
         *,
         generator: WeeklyPlanGenerationService | None = None,
         ai_adjustment_provider=None,
+        compact_week_percent: int = 0,
+        basket_target: int = 0,
     ):
         self.uow_factory = uow_factory
         self.generator = generator or WeeklyPlanGenerationService()
         self.ai_adjustment_provider = ai_adjustment_provider
         self.grocery_service = WeeklyGroceryService()
+        # Share of users whose generated weeks are compact (A/B arm).
+        self.compact_week_percent = max(0, min(100, int(compact_week_percent)))
+        # Fresh ingredients a compact week aims to buy; 0 means no budget.
+        self.basket_target = max(0, int(basket_target)) or None
+
+    def _plans_compact_week(self, user_id: str) -> bool:
+        """Stable per-user A/B bucket for compact week generation."""
+        if self.compact_week_percent <= 0:
+            return False
+        digest = hashlib.sha256(f"compact-week:{user_id}".encode()).hexdigest()
+        return int(digest[:8], 16) % 100 < self.compact_week_percent
 
     def _select_recipes(self, *args, **kwargs):
         with planner_phase("selection_cpu"):
             return self.generator.generate(*args, **kwargs)
+
+    def _select_compact_week(self, *args, **kwargs):
+        with planner_phase("selection_cpu"):
+            return self.generator.generate_compact(*args, **kwargs)
 
     @planner_timed("service")
     async def generate(self, command: GenerateWeeklyMealPlanCommand) -> WeeklyMealPlan:
@@ -122,20 +174,72 @@ class WeeklyMealPlanService:
                 if current is not None and current.status.value == "confirmed":
                     raise WeeklyMealPlanConflictError()
                 captured_state = _generation_state(current)
+                previous = await uow.weekly_meal_plans.get_current(
+                    user_id=command.user_id,
+                    week_start_date=command.week_start_date - timedelta(days=7),
+                )
                 captured_version = (
                     await uow.catalog_recipes.capture_catalog_publication_version()
                 )
                 revision = await uow.catalog_recipes.get_active_catalog_revision()
                 meals = await uow.catalog_recipes.list_selection_candidates()
-            selected = self._select_recipes(
-                meals,
-                user_id=command.user_id,
-                week_start_date=command.week_start_date.isoformat(),
-                daily_calories=command.daily_calories,
-                preferences=command.preferences,
-            )
+                profile = await uow.users.get_profile(command.user_id)
+                preferences = _resolve_plan_preferences(
+                    command.preferences,
+                    profile,
+                    await _known_allergen_codes(uow, meals),
+                )
+                basket_ids = (
+                    await _basket_ids(
+                        uow.catalog_recipes,
+                        (captured_version.selection, captured_version.ingredients),
+                    )
+                    if self._plans_compact_week(command.user_id)
+                    else None
+                )
+                memory = await _user_food_memory(
+                    uow,
+                    user_id=command.user_id,
+                    week_start_date=command.week_start_date,
+                    timezone=command.timezone,
+                )
+            selection = {
+                "user_id": command.user_id,
+                "week_start_date": command.week_start_date.isoformat(),
+                "daily_calories": command.daily_calories,
+                "preferences": preferences,
+                # Last week's dishes come later so next week is not a copy.
+                "last_week": frozenset(
+                    slot.recipe_id
+                    for slot in (previous.slots if previous else ())
+                    if slot.recipe_id
+                ),
+            }
+            # What the user actually eats nudges the pick between dishes that
+            # fit the day about as well. A user with no log changes nothing.
+            selection["memory"] = memory
+            if basket_ids is None:
+                algorithm_version = self.generator.algorithm_version
+                selected = self._select_recipes(meals, **selection)
+            else:
+                algorithm_version = self.generator.compact_algorithm_version
+                selected = self._select_compact_week(
+                    meals,
+                    **selection,
+                    basket_ids=basket_ids,
+                    basket_target=self.basket_target,
+                    fixed={
+                        (slot.day_index, slot.slot_index): slot.recipe_id
+                        or f"{_SAVED_FIXED_PREFIX}{slot.saved_suggestion_id}"
+                        for slot in (current.slots if current else ())
+                        if slot.is_logged and slot.has_recipe
+                    },
+                )
+            servings = _compose_servings(command, selected, meals, memory)
             recipe_ids = {
-                (item.day_index, item.slot_index): item.recipe_id for item in selected
+                (item.day_index, item.slot_index): item.recipe_id
+                for item in selected
+                if not (item.recipe_id or "").startswith(_SAVED_FIXED_PREFIX)
             }
             async with self.uow_factory() as uow:
                 version = await uow.catalog_recipes.lock_catalog_publication(
@@ -195,10 +299,12 @@ class WeeklyMealPlanService:
                         user_id=command.user_id,
                         week_start_date=command.week_start_date,
                         timezone=command.timezone,
-                        preferences=command.preferences,
+                        preferences=preferences,
                         daily_calories=command.daily_calories,
                         catalog_revision=_revision_key(revision),
                         recipe_ids=recipe_ids,
+                        algorithm_version=algorithm_version,
+                        servings=servings,
                     )
                 else:
                     logged = {
@@ -209,15 +315,20 @@ class WeeklyMealPlanService:
                     plan = await uow.weekly_meal_plans.update(
                         user_id=command.user_id,
                         plan_id=current.id,
-                        people=command.preferences.people,
-                        preferences=command.preferences,
+                        people=preferences.people,
+                        preferences=preferences,
                         slots={
                             key: value
                             for key, value in recipe_ids.items()
                             if key not in logged
                         },
-                        algorithm_version=self.generator.algorithm_version,
+                        algorithm_version=algorithm_version,
                         expected_revision=current.revision,
+                        servings={
+                            key: value
+                            for key, value in servings.items()
+                            if key not in logged
+                        },
                     )
                 await uow.meal_write_operations.complete(
                     reservation, target_meal_id=plan.id, response={"plan_id": plan.id}
@@ -254,10 +365,17 @@ class WeeklyMealPlanService:
                 )
                 if current is None:
                     raise ResourceNotFoundException("Weekly meal plan not found")
-                preferences = command.preferences or current.preferences
+                preferences = current.preferences
+                if command.preferences is not None:
+                    preferences = _resolve_plan_preferences(
+                        command.preferences,
+                        await uow.users.get_profile(command.user_id),
+                        await _known_allergen_codes(uow, ()),
+                    )
                 hard_preferences_changed = _hard_preferences_changed(
                     current.preferences, preferences
                 )
+                saved_slots = await _saved_recipe_slots(uow, command)
                 expected_revision = (
                     command.expected_revision
                     if command.expected_revision is not None
@@ -285,6 +403,10 @@ class WeeklyMealPlanService:
                         coordinate: slot.recipe_id
                         for coordinate, slot in slots_by_coordinate.items()
                     }
+                    # A saved recipe is the user's own: the plan's diet,
+                    # allergy, dislike and meal-type rules do not apply to it.
+                    for coordinate in saved_slots:
+                        proposed_recipe_ids[coordinate] = None
                     for coordinate, recipe_id in (command.slots or {}).items():
                         try:
                             ensure_slot_coordinate(*coordinate)
@@ -338,6 +460,7 @@ class WeeklyMealPlanService:
                     status=command.status,
                     slots=command.slots,
                     expected_revision=expected_revision,
+                    saved_slots=saved_slots or None,
                 )
                 if plan is None:
                     raise ResourceNotFoundException("Weekly meal plan not found")
@@ -485,12 +608,12 @@ class WeeklyMealPlanService:
             recipe_ids = {
                 (item.day_index, item.slot_index): item.recipe_id for item in selected
             }
+            # Logged slots stay as they are, a logged saved recipe included.
             proposed_slots = tuple(
-                _slot_with_recipe(
-                    slot,
-                    slot.recipe_id
-                    if slot.is_logged
-                    else recipe_ids.get((slot.day_index, slot.slot_index)),
+                slot
+                if slot.is_logged
+                else _slot_with_recipe(
+                    slot, recipe_ids.get((slot.day_index, slot.slot_index))
                 )
                 for slot in plan.slots
             )
@@ -500,12 +623,13 @@ class WeeklyMealPlanService:
             {
                 "day_index": before.day_index,
                 "slot_index": before.slot_index,
-                "previous_recipe_id": before.recipe_id,
+                # A replaced saved recipe is named by its saved-suggestion id.
+                "previous_recipe_id": before.recipe_ref,
                 "new_recipe_id": after.recipe_id,
                 "action": "replace" if after.recipe_id else "clear",
             }
             for before, after in zip(plan.slots, proposed_slots, strict=True)
-            if before.recipe_id != after.recipe_id
+            if _recipe_key(before) != _recipe_key(after)
         )
         _validate_proposal_outcome(
             plan=plan,
@@ -726,22 +850,19 @@ class WeeklyMealPlanService:
                     "A meal replacement cannot leave a slot empty; no eligible recipe was returned",
                     error_code="AI_OUTPUT_INCOMPLETE",
                 )
-            if new_recipe_id == current.recipe_id:
+            if (
+                new_recipe_id == current.recipe_id
+                and current.saved_suggestion_id is None
+            ):
                 continue
-            proposed[plan.slots.index(current)] = current.__class__(
-                id=current.id,
-                day_index=current.day_index,
-                slot_index=current.slot_index,
-                recipe_id=new_recipe_id,
-                is_logged=current.is_logged,
-                logged_meal_id=current.logged_meal_id,
-                version=current.version,
+            proposed[plan.slots.index(current)] = _slot_with_recipe(
+                current, new_recipe_id
             )
             changes.append(
                 {
                     "day_index": current.day_index,
                     "slot_index": current.slot_index,
-                    "previous_recipe_id": current.recipe_id,
+                    "previous_recipe_id": current.recipe_ref,
                     "new_recipe_id": new_recipe_id,
                     "action": change.action,
                 }
@@ -885,11 +1006,80 @@ class WeeklyMealPlanService:
             )
 
 
+async def _saved_recipe_slots(
+    uow, command: UpdateWeeklyMealPlanCommand
+) -> dict[tuple[int, int], SavedRecipeSnapshot]:
+    """Copy each requested saved recipe of the caller for its slot.
+
+    Another user's saved suggestion is reported like a missing one.
+    """
+    requested = command.saved_slots or {}
+    if not requested:
+        return {}
+    for coordinate in requested:
+        try:
+            ensure_slot_coordinate(*coordinate)
+        except ValueError as exc:
+            raise ValidationException(
+                "slot coordinate is invalid", error_code="WEEKLY_SLOT_INVALID"
+            ) from exc
+        if coordinate in (command.slots or {}):
+            raise ValidationException(
+                "a slot takes a catalog recipe or a saved recipe, not both",
+                error_code="WEEKLY_SLOT_INVALID",
+            )
+    snapshots: dict[str, SavedRecipeSnapshot] = {}
+    for suggestion_id in sorted(set(requested.values())):
+        saved = await uow.saved_suggestions.find_by_user_and_suggestion(
+            command.user_id, suggestion_id
+        )
+        if saved is None:
+            raise ResourceNotFoundException(
+                "Saved recipe not found", error_code="SAVED_RECIPE_NOT_FOUND"
+            )
+        try:
+            snapshots[suggestion_id] = SavedRecipeSnapshot.from_saved_suggestion(
+                suggestion_id, saved.get("suggestion_data")
+            )
+        except ValueError as exc:
+            raise BusinessLogicException(
+                "This saved recipe has no name or nutrition to plan with",
+                error_code="SAVED_RECIPE_UNUSABLE",
+            ) from exc
+    return {
+        coordinate: snapshots[suggestion_id]
+        for coordinate, suggestion_id in requested.items()
+    }
+
+
+async def _basket_ids(
+    catalog_recipes, catalog_version: tuple[int, int]
+) -> Mapping[str, frozenset[int]]:
+    """Each active recipe's fresh ingredient ids, staples left out.
+
+    A recipe whose lines are all staples maps to an empty set; a recipe with
+    no lines is absent, so the generator treats it as unknown.
+    """
+    global _basket_ids_cache
+    cached = _basket_ids_cache
+    if cached is not None and cached[0] == catalog_version:
+        return cached[1]
+    lines = await catalog_recipes.list_selection_ingredient_lines()
+    ids: dict[str, set[int]] = {}
+    for recipe_id, food_reference_id, name in lines:
+        fresh = fresh_ingredient_id(food_reference_id, name)
+        recipe_ids = ids.setdefault(recipe_id, set())
+        if fresh is not None:
+            recipe_ids.add(fresh)
+    basket = {recipe_id: frozenset(values) for recipe_id, values in ids.items()}
+    _basket_ids_cache = (catalog_version, basket)
+    return basket
+
+
 def _fingerprint(command) -> str:
     payload = {
         key: _fingerprint_value(value)
-        for key, value in vars(command).items()
-        if key != "idempotency_key"
+        for key, value in _fingerprint_fields(command).items()
     }
     return canonicalize_fingerprint(payload)
 
@@ -897,14 +1087,21 @@ def _fingerprint(command) -> str:
 def _legacy_fingerprint(command) -> str:
     """Hash used when dataclass fields were stringified instead of expanded."""
 
-    payload = {
-        key: value for key, value in vars(command).items() if key != "idempotency_key"
+    return canonicalize_fingerprint(_fingerprint_fields(command))
+
+
+def _fingerprint_fields(command) -> dict:
+    # An empty saved_slots is left out so requests without saved recipes
+    # keep the fingerprint they had before the field existed.
+    return {
+        key: value
+        for key, value in vars(command).items()
+        if key != "idempotency_key" and not (key == "saved_slots" and not value)
     }
-    return canonicalize_fingerprint(payload)
 
 
 def _plan_has_assigned_recipe(plan: WeeklyMealPlan) -> bool:
-    return any(slot.recipe_id for slot in plan.slots)
+    return any(slot.has_recipe for slot in plan.slots)
 
 
 def _fingerprint_value(value):
@@ -1018,8 +1215,11 @@ def _profile_values(profile, field: str) -> tuple[str, ...]:
 
 
 def _normalize_preference_text(value: object) -> str:
+    # NFKD has no decomposition for "đ"; map it first so "đậu phộng" folds to
+    # "dau phong", not "au phong".
+    text = str(value).replace("đ", "d").replace("Đ", "D")
     return (
-        unicodedata.normalize("NFKD", str(value))
+        unicodedata.normalize("NFKD", text)
         .encode("ascii", "ignore")
         .decode("ascii")
         .casefold()
@@ -1089,6 +1289,185 @@ def _profile_allergy_codes(
             error_code="AI_PROFILE_ALLERGY_UNSUPPORTED",
         )
     return resolved
+
+
+# How far back the planner looks to learn how somebody eats. The affinity
+# service already weights a 90-day window by recency.
+MEMORY_WINDOW_DAYS = 90
+
+
+async def _user_food_memory(
+    uow, *, user_id: str, week_start_date: date, timezone: str | None
+) -> UserFoodMemory:
+    """What the log says about how this user eats, or nothing.
+
+    Built on the way past rather than stored: it is two reads, a week is
+    planned about once a week, and a stored copy would buy a table and a
+    staleness bug for no gain. A repository that cannot answer, or a user with
+    no history, gives an empty memory and the week is planned as before.
+    """
+    meals_repo = getattr(uow, "meals", None)
+    if meals_repo is None:
+        return EMPTY_MEMORY
+    start = week_start_date - timedelta(days=MEMORY_WINDOW_DAYS)
+    window = {
+        "user_id": user_id,
+        "start_date": start,
+        "end_date": week_start_date,
+        "user_timezone": timezone,
+    }
+
+    weights: dict[int, float] = {}
+    aggregate = getattr(meals_repo, "aggregate_linked_ingredient_history", None)
+    if aggregate is not None:
+        try:
+            buckets = await aggregate(reference_date=week_start_date, **window)
+        except Exception:  # noqa: BLE001 - memory is a nicety, never a blocker
+            logger.warning("Could not read ingredient history for the planner")
+            buckets = []
+        if buckets:
+            # build_profile reads a list of events and needs a clock;
+            # build_profile_from_buckets is the one that takes what
+            # aggregate_linked_ingredient_history returns, ages included.
+            profile = IngredientAffinityService().build_profile_from_buckets(buckets)
+            weights = dict(profile.weights)
+
+    shapes: list[LoggedMealShape] = []
+    recent = getattr(meals_repo, "recent_logged_meal_shapes", None)
+    if recent is not None:
+        try:
+            shapes = await recent(**window)
+        except Exception:  # noqa: BLE001
+            logger.warning("Could not read logged meal shapes for the planner")
+            shapes = []
+
+    outcomes: list[tuple[str, str]] = []
+    plans_repo = getattr(uow, "weekly_meal_plans", None)
+    list_outcomes = getattr(plans_repo, "list_plan_recipe_outcomes", None)
+    if list_outcomes is not None:
+        try:
+            outcomes = await list_outcomes(user_id=user_id, since=start)
+        except Exception:  # noqa: BLE001
+            logger.warning("Could not read past plan outcomes for the planner")
+            outcomes = []
+
+    locale = locale_for_timezone(timezone)
+    return build_user_food_memory(
+        affinity_weights=weights,
+        meals=shapes,
+        is_staple_item=locale.is_staple_item,
+        plan_outcomes=outcomes,
+    )
+
+
+async def _known_allergen_codes(uow, meals) -> tuple[str, ...]:
+    codes: list[str] = []
+    lister = getattr(uow.catalog_recipes, "list_allergen_codes", None)
+    if callable(lister):
+        codes.extend(str(code) for code in await lister())
+    for meal in meals:
+        for raw_code in getattr(meal, "allergen_codes", ()):
+            code = str(raw_code).strip()
+            if code:
+                codes.append(code)
+    return tuple(codes)
+
+
+def _resolve_plan_preferences(
+    preferences: WeeklyMealPlanPreferences, profile, known_codes: tuple[str, ...]
+) -> WeeklyMealPlanPreferences:
+    """Hard plan constraints from the request plus the user's saved profile.
+
+    Allergies from both sources resolve to catalog allergen codes. A term the
+    recipe data cannot check fails the request instead of being dropped. A
+    profile diet applies when the request leaves diet at "any".
+    """
+    terms = (*preferences.allergies, *_profile_values(profile, "allergies"))
+    codes, unresolved = resolve_allergen_terms(terms, known_codes)
+    if unresolved:
+        raise ValidationException(
+            "These allergies can't be checked against the recipe data yet: "
+            + ", ".join(unresolved),
+            error_code="ALLERGY_UNRESOLVED",
+        )
+    allergies = set(codes)
+    diet = preferences.diet
+    if diet == "any":
+        profile_diets = _profile_values(profile, "dietary_preferences")
+        if "vegan" in profile_diets:
+            diet = "vegetarian"
+            vegan_codes, _ = resolve_allergen_terms(("milk", "egg"), known_codes)
+            allergies.update(vegan_codes)
+        elif "vegetarian" in profile_diets:
+            diet = "vegetarian"
+        elif {"no pork", "halal"} & set(profile_diets):
+            diet = "no-pork"
+    return replace(preferences, diet=diet, allergies=tuple(sorted(allergies)))
+
+
+def _compose_servings(
+    command, selected, meals, memory: UserFoodMemory = EMPTY_MEMORY
+) -> dict[tuple[int, int], tuple[float, int]]:
+    """How much of each chosen dish to serve, and the rice beside it.
+
+    The dishes are already picked; this only decides the serving, against the
+    day's targets. Without macro targets it still fits calories. Rice goes
+    only with dishes that take it.
+    """
+    targets = DayTargets(
+        kcal=float(command.daily_calories or 0),
+        protein=float(getattr(command, "daily_protein", None) or 0),
+        carbs=float(getattr(command, "daily_carbs", None) or 0),
+        fat=float(getattr(command, "daily_fat", None) or 0),
+    )
+    if targets.kcal <= 0:
+        return {}
+    locale = locale_for_timezone(getattr(command, "timezone", None))
+    by_id = {meal.id: meal for meal in meals}
+    rice_dishes = frozenset(meal.id for meal in meals if _takes_rice(meal, locale))
+    chosen: dict[int, dict[int, str]] = {}
+    for item in selected:
+        recipe_id = item.recipe_id or ""
+        if not recipe_id or recipe_id.startswith(_SAVED_FIXED_PREFIX):
+            continue
+        chosen.setdefault(item.day_index, {})[item.slot_index] = recipe_id
+
+    servings: dict[tuple[int, int], tuple[float, int]] = {}
+    served: dict[str, int] = {}
+    for day in sorted(chosen):
+        slots = chosen[day]
+        candidates = tuple(
+            (by_id[slots[slot]],) if slot in slots and slots[slot] in by_id else ()
+            for slot in range(WEEKLY_SLOTS_PER_DAY)
+        )
+        for composed in compose_day(
+            candidates,
+            targets,
+            day_index=day,
+            rice_dishes=rice_dishes,
+            locale=locale,
+            # How this user really splits a day, when the log knows. The
+            # locale's assumption covers everyone else.
+            shares=memory.slot_calorie_shares or None,
+            used_counts=served,
+        ):
+            if composed.recipe_id is None:
+                continue
+            servings[(day, composed.slot_index)] = (
+                composed.portion,
+                composed.rice_steps,
+            )
+            served[composed.recipe_id] = served.get(composed.recipe_id, 0) + 1
+    return servings
+
+
+def _takes_rice(meal, locale: MealLocale = DEFAULT_LOCALE) -> bool:
+    """A savoury main eaten with the staple, not a soup, noodle or rice dish.
+
+    Which cooking words mean that is a regional question, so the word lists
+    live in the locale pack rather than here.
+    """
+    return locale.takes_staple(_normalize_preference_text(getattr(meal, "name", "")))
 
 
 def _validate_proposal_outcome(
@@ -1375,15 +1754,19 @@ def _target_coordinate(command: AiAdjustMealPlanCommand) -> tuple[int, int] | No
 
 
 def _slot_with_recipe(slot, recipe_id):
-    return slot.__class__(
-        id=slot.id,
-        day_index=slot.day_index,
-        slot_index=slot.slot_index,
+    # Keeps log and skip state; the proposal changes only the recipe. A saved
+    # recipe in the slot is replaced, so its copy goes too.
+    return replace(
+        slot,
         recipe_id=recipe_id,
-        is_logged=slot.is_logged,
-        logged_meal_id=slot.logged_meal_id,
-        version=slot.version,
+        recipe_override=None,
+        saved_suggestion_id=None,
+        saved_recipe=None,
     )
+
+
+def _recipe_key(slot) -> tuple[str | None, str | None]:
+    return (slot.recipe_id, slot.saved_suggestion_id)
 
 
 def _generation_state(plan):
@@ -1394,7 +1777,13 @@ def _generation_state(plan):
         plan.revision,
         plan.preferences,
         tuple(
-            (slot.id, slot.version, slot.recipe_id, slot.is_logged)
+            (
+                slot.id,
+                slot.version,
+                slot.recipe_id,
+                slot.saved_suggestion_id,
+                slot.is_logged,
+            )
             for slot in plan.slots
         ),
     )

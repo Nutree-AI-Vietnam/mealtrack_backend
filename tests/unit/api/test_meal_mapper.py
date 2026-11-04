@@ -149,6 +149,7 @@ class TestMealMapper:
             ready_at=datetime(2025, 1, 15, 14, 0),
             created_at=datetime(2025, 1, 15, 13, 30),
             nutrition=nutrition,
+            source="scanner",
         )
 
         result = MealMapper.to_detailed_response(
@@ -1886,3 +1887,58 @@ class TestMealMapper:
         )
 
         assert insights is None
+
+    def test_detailed_response_exposes_ai_accuracy_fields(self):
+        """Meal detail carries AI provenance and item-origin counts."""
+        meal = Meal(
+            meal_id=str(uuid.uuid4()),
+            user_id=str(uuid.uuid4()),
+            status=MealStatus.READY,
+            image=MealImage(
+                url="https://example.com/scan.jpg",
+                image_id=str(uuid.uuid4()),
+                format="jpeg",
+                size_bytes=1024,
+            ),
+            source="scanner",
+            dish_name="Scanned bowl",
+            ready_at=datetime(2025, 1, 15, 14, 0),
+            created_at=datetime(2025, 1, 15, 13, 30),
+            nutrition=Nutrition(
+                macros=Macros(protein=20, carbs=30, fat=10),
+                confidence_score=0.84,
+                food_items=[
+                    FoodItem(
+                        id="item-1",
+                        name="Chicken",
+                        quantity=100,
+                        unit="g",
+                        macros=Macros(protein=20, carbs=0, fat=5),
+                        source_kind="usda",
+                    ),
+                    FoodItem(
+                        id="item-2",
+                        name="Rice",
+                        quantity=150,
+                        unit="g",
+                        macros=Macros(protein=4, carbs=30, fat=1),
+                    ),
+                ],
+            ),
+        )
+
+        scanned = MealMapper.to_detailed_response(meal)
+        assert scanned.ai_generated is True
+        assert scanned.ai_confidence == 0.84
+        assert scanned.nutrition_source_summary.model_dump() == {
+            "local": 0,
+            "usda": 1,
+            "provider": 0,
+            "custom": 0,
+            "unknown": 1,
+        }
+
+        meal.source = "manual"
+        manual = MealMapper.to_detailed_response(meal)
+        assert manual.ai_generated is False
+        assert manual.ai_confidence is None

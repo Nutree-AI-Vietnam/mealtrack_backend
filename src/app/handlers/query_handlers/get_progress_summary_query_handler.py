@@ -20,11 +20,18 @@ from src.app.handlers.query_handlers.progress_summary_support import (
     resolve_today_live_target,
     write_summary_cache,
 )
+from src.app.handlers.query_handlers.progress_summary_trends import (
+    fetch_movement_entries_by_day,
+    included_burn_by_day,
+    trends_goal_fields,
+)
 from src.app.queries.progress.get_progress_summary_query import GetProgressSummaryQuery
+from src.app.services.supplement_days import doses_between
 from src.domain.model.meal import MealStatus
 from src.domain.model.meal_projection import MealProjection
 from src.domain.ports.cache_port import CachePort
 from src.domain.services.hydration_intake import orphan_drink_day_totals
+from src.domain.services.micronutrient_dri_targets import fiber_goal_g
 from src.domain.services.progress_summary_window import (
     PROGRESS_SUMMARY_CAP_DAYS,
     clamp_progress_window,
@@ -60,9 +67,17 @@ class GetProgressSummaryQueryHandler(
             start, end = clamp_progress_window(
                 query.start_date, query.end_date, created_on=created_on, today=today
             )
-            targets = await load_tdee_targets(query.user_id, self.cache_service)
+
+        # TDEE opens its own session. Close this one first so a summary
+        # request never holds a connection while waiting for a second checkout.
+        targets = await load_tdee_targets(query.user_id, self.cache_service)
+
+        async with AsyncUnitOfWork() as uow:
             auto_adjust = WeeklyBudgetService.auto_adjust_enabled(
                 await uow.users.get_weekly_auto_adjust(query.user_id)
+            )
+            activity_calories = WeeklyBudgetService.activity_calories_enabled(
+                await uow.users.get_activity_calories(query.user_id)
             )
             cached, intake_revision = await read_summary_cache(
                 self.cache_service,
@@ -71,6 +86,8 @@ class GetProgressSummaryQueryHandler(
                 end,
                 targets[4],
                 auto_adjust,
+                include_trends=query.include_trends,
+                activity_calories=activity_calories,
             )
             if cached is not None:
                 return await overlay_live_hydration(
@@ -86,9 +103,17 @@ class GetProgressSummaryQueryHandler(
                 user_tz,
                 targets,
                 auto_adjust,
+                include_trends=query.include_trends,
+                activity_calories=activity_calories,
             )
             await write_summary_cache(
-                self.cache_service, query.user_id, start, end, result, intake_revision
+                self.cache_service,
+                query.user_id,
+                start,
+                end,
+                result,
+                intake_revision,
+                include_trends=query.include_trends,
             )
             return result
 
@@ -103,15 +128,23 @@ class GetProgressSummaryQueryHandler(
         user_tz: Any,
         targets: tuple,
         auto_adjust: bool = True,
+        *,
+        include_trends: bool = False,
+        activity_calories: bool = True,
     ) -> dict[str, Any]:
         base_cal, protein_t, _c, _f, revision, bmr = targets
+        # Only the Trends fields use food items, whose micros fill the
+        # nutrients the meal-level totals leave out. The day's score keeps
+        # meal-level micros either way (see build_progress_day_row).
         meals = await uow.meals.find_by_date_range(
             user_id,
             start,
             end,
             limit=_MEAL_RANGE_LIMIT,
             user_timezone=user_tz_str,
-            projection=MealProjection.MACROS_ONLY,
+            projection=MealProjection.MACROS_WITH_MICROS
+            if include_trends
+            else MealProjection.MACROS_ONLY,
         )
         meals_by_day: dict[date, list] = {}
         for meal in meals:
@@ -132,18 +165,43 @@ class GetProgressSummaryQueryHandler(
         drink_macros_by_day, drink_micros_by_day = orphan_drink_day_totals(
             hydration_entries, meals_by_day, user_tz_str
         )
-        movement_by_day = await fetch_movement_by_day(
-            uow, user_id, start, end, user_tz_str, user_tz
+        entries_by_day: dict[date, list[Any]] = {}
+        # Doses count in the day highlights on both paths, as on Home.
+        doses_by_day: dict[date, list[Any]] = {}
+        for dose in await doses_between(uow, user_id, start, end):
+            doses_by_day.setdefault(dose.local_date, []).append(dose)
+        if include_trends:
+            entries_by_day = await fetch_movement_entries_by_day(
+                uow, user_id, start, end, user_tz_str, user_tz
+            )
+            movement_by_day = included_burn_by_day(entries_by_day)
+        else:
+            movement_by_day = await fetch_movement_by_day(
+                uow, user_id, start, end, user_tz_str, user_tz
+            )
+        cheat_days = await uow.cheat_days.find_by_user_and_date_range(
+            user_id, start, end
         )
-        cheat_days = await uow.cheat_days.find_by_user_and_date_range(user_id, start, end)
         snapshots = await uow.daily_target_snapshots.find_calories_by_range(
             user_id, start, end
         )
         profile = await uow.users.get_profile(UUID(user_id))
         live_cal = await resolve_today_live_target(
-            uow, user_id, today, start, end, user_tz_str, base_cal, protein_t, bmr
+            uow,
+            user_id,
+            today,
+            start,
+            end,
+            user_tz_str,
+            base_cal,
+            protein_t,
+            bmr,
+            activity_calories=activity_calories,
         )
         goal_ml = hydration_goal_ml(profile)
+        fiber_target = fiber_goal_g(
+            getattr(profile, "gender", None), getattr(profile, "age", None)
+        )
         cheat_set = {cd.date for cd in cheat_days}
 
         days: list[dict[str, Any]] = []
@@ -165,20 +223,29 @@ class GetProgressSummaryQueryHandler(
                     hydration_ml=hydration_by_day.get(current, 0),
                     hydration_goal_ml=goal_ml,
                     protein_target_g=protein_t,
+                    fiber_target_g=fiber_target,
                     target_calories=target_cal,
                     target_source=source,
                     is_cheat_day=current in cheat_set,
                     drink_macros=drink_macros_by_day.get(current),
                     drink_micros=drink_micros_by_day.get(current),
+                    trends_movement=entries_by_day.get(current, [])
+                    if include_trends
+                    else None,
+                    supplement_doses=doses_by_day.get(current, []),
                 )
             )
             current += timedelta(days=1)
 
-        return {
+        result: dict[str, Any] = {
             "effective_start": start.isoformat(),
             "effective_end": end.isoformat(),
             "cap_days": PROGRESS_SUMMARY_CAP_DAYS,
             "days": days,
             "target_revision": revision,
             "weekly_auto_adjust": auto_adjust,
+            "activity_calories": activity_calories,
         }
+        if include_trends:
+            result.update(trends_goal_fields(profile, base_cal, revision))
+        return result

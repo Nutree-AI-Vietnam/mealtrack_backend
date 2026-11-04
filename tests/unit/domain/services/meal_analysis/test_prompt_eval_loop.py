@@ -30,6 +30,77 @@ def _invalid_payload() -> dict:
     }
 
 
+def test_non_food_hallucinations_reduce_identity_precision():
+    cases = [
+        PromptEvalCase(
+            case_id="plate",
+            expected_foods=({"aliases": ["chicken"], "quantity_g": 120},),
+            expected_is_food=True,
+        ),
+        PromptEvalCase(case_id="empty-bowl", expected_is_food=False),
+    ]
+    results = {
+        case.case_id: {
+            "response_payload": _valid_payload(),
+            "evidence_kind": "provider_observation",
+        }
+        for case in cases
+    }
+    result = PromptEvalLoop().rank_candidates(
+        {"candidate": "prompt"}, cases, {"candidate": results}
+    )[0]
+    assert result.identity_precision == 0.5
+    assert result.identity_recall == 1
+    assert result.food_detection_accuracy == 0.5
+
+
+def test_missing_identity_annotations_do_not_count_as_negative_images():
+    cases = [
+        PromptEvalCase(
+            case_id="reviewed",
+            expected_foods=({"aliases": ["chicken"], "quantity_g": 120},),
+        ),
+        PromptEvalCase(case_id="nutrition-only", expected_calories_kcal=(150, 200)),
+    ]
+    results = {
+        case.case_id: {
+            "response_payload": _valid_payload(),
+            "evidence_kind": "provider_observation",
+        }
+        for case in cases
+    }
+    result = PromptEvalLoop().rank_candidates(
+        {"candidate": "prompt"}, cases, {"candidate": results}
+    )[0]
+    assert result.identity_precision == 1
+
+
+def test_missing_small_topping_reduces_recall_even_with_accurate_main_food():
+    case = PromptEvalCase(
+        case_id="chicken-with-sesame",
+        expected_foods=(
+            {"aliases": ["chicken"], "quantity_g": 120},
+            {"aliases": ["sesame seeds"], "quantity_g": 0.5},
+        ),
+        expected_is_food=True,
+    )
+    result = PromptEvalLoop().rank_candidates(
+        {"candidate": "prompt"},
+        [case],
+        {
+            "candidate": {
+                case.case_id: {
+                    "response_payload": _valid_payload(),
+                    "evidence_kind": "provider_observation",
+                }
+            }
+        },
+    )[0]
+    assert result.food_detection_accuracy == 1
+    assert result.identity_precision == 1
+    assert result.identity_recall == 0.5
+
+
 def _legacy_alias_payload() -> dict:
     return {
         "structured_data": {

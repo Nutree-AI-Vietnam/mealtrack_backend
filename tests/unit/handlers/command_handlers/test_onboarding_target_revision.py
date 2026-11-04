@@ -35,6 +35,10 @@ def _profile(revision=1):
         custom_protein_g=None,
         custom_carbs_g=None,
         custom_fat_g=None,
+        weight_loss_kg_per_week=None,
+        weight_gain_kg_per_week=None,
+        pace_clinician_disclaimer=False,
+        weight_loss_pace_reset_on=None,
         profile_target_revision=revision,
     )
 
@@ -92,3 +96,40 @@ async def test_identical_onboarding_target_values_do_not_increment_revision():
     ).handle(_command(user_id))
 
     assert profile.profile_target_revision == 1
+
+
+@pytest.mark.asyncio
+async def test_a_chosen_pace_is_capped_at_the_floor_and_starts_today():
+    user_id = str(uuid4())
+    profile = _profile()
+
+    # 70 kg man at a desk with no training: BMR 1648.75, TDEE 1978.5, so the
+    # BMR floor leaves room for 0.29 kg a week.
+    await SaveUserOnboardingCommandHandler(
+        _uow(profile), event_publisher=MagicMock(publish=AsyncMock())
+    ).handle(
+        _command(
+            user_id,
+            fitness_goal="cut",
+            training_days_per_week=0,
+            training_minutes_per_session=0,
+            weight_loss_kg_per_week=0.8,
+        )
+    )
+
+    assert profile.weight_loss_kg_per_week == 0.29
+    assert profile.weight_loss_pace_reset_on is not None
+    assert profile.profile_target_revision == 2
+
+
+@pytest.mark.asyncio
+async def test_a_pace_is_not_saved_for_a_goal_other_than_cut():
+    user_id = str(uuid4())
+    profile = _profile()
+
+    await SaveUserOnboardingCommandHandler(
+        _uow(profile), event_publisher=MagicMock(publish=AsyncMock())
+    ).handle(_command(user_id, weight_loss_kg_per_week=0.5))
+
+    assert profile.weight_loss_kg_per_week is None
+    assert profile.weight_loss_pace_reset_on is None

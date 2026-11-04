@@ -275,6 +275,33 @@ class TestCalculateWeeklyConsumedAsync:
 
         assert result["calories"] == 2300.0
 
+    @pytest.mark.asyncio
+    async def test_keeps_movement_out_when_activity_calories_off(self):
+        """With activity calories off, burn no longer offsets food calories."""
+        meal = _ready_meal(
+            protein=100,
+            carbs=250,
+            fat=100,
+            created_at=datetime(2026, 3, 9, 12, tzinfo=UTC),
+        )
+        mock_uow = Mock()
+        mock_uow.meals.find_by_date_range = AsyncMock(return_value=[meal])
+        movement = _FakeMovementEntries(
+            [(datetime(2026, 3, 9, 18, tzinfo=UTC), 200.0, True)]
+        )
+        mock_uow.movement_entries = movement
+
+        result = await WeeklyBudgetService.calculate_weekly_consumed_async(
+            uow=mock_uow,
+            user_id="user123",
+            week_start=date(2026, 3, 9),
+            user_timezone="UTC",
+            activity_calories=False,
+        )
+
+        assert result["calories"] == 2300.0
+        assert movement.calls == []
+
     # --- Ported from TestCalculateWeeklyConsumed (sync) — see scout matrix ---
 
     @pytest.mark.asyncio
@@ -600,6 +627,55 @@ class TestGetEffectiveAdjustedDailyAsync:
         assert result.consumed_total["carbs"] == 250
         assert result.consumed_total["fat"] == 100
         assert result.adjusted.calories == pytest.approx(1983.3, abs=1.0)
+
+    @pytest.mark.asyncio
+    async def test_workout_credit_ignored_when_activity_calories_off(self):
+        """With activity calories off, the 2300 kcal day counts in full."""
+        meal = _ready_meal(
+            protein=100,
+            carbs=250,
+            fat=100,
+            created_at=datetime(2026, 3, 9, 12, tzinfo=UTC),
+        )
+
+        mock_uow = Mock()
+        mock_uow.cheat_days.find_by_user_and_date_range = AsyncMock(return_value=[])
+        mock_uow.meals.get_daily_meal_counts = AsyncMock(
+            return_value={date(2026, 3, 9): 1}
+        )
+        mock_uow.meals.find_by_date_range = AsyncMock(return_value=[meal])
+        mock_uow.movement_entries = _FakeMovementEntries(
+            [(datetime(2026, 3, 9, 18, tzinfo=UTC), 200.0, True)]
+        )
+
+        result = await WeeklyBudgetService.get_effective_adjusted_daily_async(
+            uow=mock_uow,
+            user_id="user123",
+            week_start=date(2026, 3, 9),
+            target_date=date(2026, 3, 10),
+            weekly_budget=WeeklyMacroBudget(
+                weekly_budget_id="budget-1",
+                user_id="user123",
+                week_start_date=date(2026, 3, 9),
+                target_calories=14000,
+                target_protein=700,
+                target_carbs=1750,
+                target_fat=466.6667,
+            ),
+            base_daily_cal=2000,
+            base_daily_protein=100,
+            base_daily_carbs=250,
+            base_daily_fat=66.6667,
+            bmr=1600,
+            user_timezone="UTC",
+            activity_calories=False,
+        )
+
+        assert result.consumed_before_today["calories"] == 2300.0
+        assert result.consumed_total["calories"] == 2300.0
+        assert result.consumed_total["protein"] == 100
+        # (14000 - 2300) / 6 remaining days, against 1983.3 with the credit.
+        assert result.adjusted.calories == pytest.approx(1950.0, abs=1.0)
 
     # --- Ported from TestGetEffectiveAdjustedDaily (sync) — see scout matrix ---
 
@@ -1052,3 +1128,34 @@ class TestGetEffectiveAdjustedDailyAsync:
             projection=MealProjection.MACROS_ONLY,
         )
         assert result.adjusted.calories > 0
+
+
+class TestBuildWeeklyEffectivePreload:
+    """The batch preload nets movement only while activity calories are on."""
+
+    _ROWS = [(datetime(2026, 3, 9, 12, tzinfo=UTC), 100.0, 250.0, 100.0, 0.0)]
+
+    def _preload(self, **kwargs):
+        return WeeklyBudgetService.build_weekly_effective_preload(
+            meal_rows=self._ROWS,
+            hydratable_dates={date(2026, 3, 9)},
+            movement_by_date={date(2026, 3, 9): 200.0},
+            cheat_dates=[],
+            week_start=date(2026, 3, 9),
+            target_date=date(2026, 3, 10),
+            user_timezone="UTC",
+            **kwargs,
+        )
+
+    def test_nets_movement_by_default(self):
+        preload = self._preload()
+
+        assert preload.consumed_total["calories"] == 2100.0
+        assert preload.consumed_before_today["calories"] == 2100.0
+
+    def test_counts_food_only_when_activity_calories_off(self):
+        preload = self._preload(activity_calories=False)
+
+        assert preload.consumed_total["calories"] == 2300.0
+        assert preload.consumed_before_today["calories"] == 2300.0
+        assert preload.consumed_for_redistribution["calories"] == 2300.0

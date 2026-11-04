@@ -1,13 +1,17 @@
 """Mappers for converting between domain models and persistence models."""
 
+import logging
 from collections.abc import Iterable
 
 from sqlalchemy.exc import InvalidRequestError
 
 from src.domain.model.user import UserDomainModel, UserProfileDomainModel
+from src.domain.model.user.user_avatar import AvatarKind, UserAvatar
 from src.infra.database.models.user.profile import UserProfile
 from src.infra.database.models.user.profile_preference import UserProfilePreference
 from src.infra.database.models.user.user import User
+
+logger = logging.getLogger(__name__)
 
 PROFILE_PREFERENCE_FIELDS = (
     "dietary_preferences",
@@ -94,6 +98,27 @@ def build_profile_preference_entries(
     return entries
 
 
+def avatar_from_entity(user_entity: User) -> UserAvatar:
+    """Read the stored avatar; a row that breaks its rules reads as auto.
+
+    A bad avatar must not break sign-in or the profile, so it is logged and
+    shown as the default instead of raising.
+    """
+    try:
+        return UserAvatar(
+            kind=AvatarKind(user_entity.avatar_kind or AvatarKind.AUTO),
+            image_id=user_entity.avatar_image_id,
+            image_url=user_entity.avatar_image_url,
+            character=user_entity.avatar_character,
+            color=user_entity.avatar_color,
+        )
+    except ValueError:
+        logger.warning(
+            "Stored avatar is invalid; showing the default for user %s", user_entity.id
+        )
+        return UserAvatar()
+
+
 class UserMapper:
     """Handles mapping between User domain and persistence models."""
 
@@ -118,6 +143,7 @@ class UserMapper:
             photo_url=user_entity.photo_url,
             deleted_at=user_entity.deleted_at,
             language_code=user_entity.language_code,
+            avatar=avatar_from_entity(user_entity),
             created_at=user_entity.created_at,
             updated_at=user_entity.updated_at,
             profiles=[UserProfileMapper.to_domain(p) for p in user_entity.profiles],
@@ -144,6 +170,7 @@ class UserMapper:
             "photo_url": user_domain.photo_url,
             "deleted_at": user_domain.deleted_at,
         }
+        # The avatar is never written from here: update_user_avatar owns it.
         # Omit a missing language so INSERT keeps the column default and
         # updates do not null out a language this mapper did not load.
         if user_domain.language_code:
@@ -192,6 +219,12 @@ class UserProfileMapper:
             ),
             daily_water_goal_ml=profile_entity.daily_water_goal_ml,
             profile_target_revision=profile_entity.profile_target_revision,
+            weight_loss_kg_per_week=profile_entity.weight_loss_kg_per_week,
+            weight_gain_kg_per_week=profile_entity.weight_gain_kg_per_week,
+            pace_clinician_disclaimer=bool(
+                profile_entity.pace_clinician_disclaimer or False
+            ),
+            weight_loss_pace_reset_on=profile_entity.weight_loss_pace_reset_on,
             created_at=profile_entity.created_at,
             updated_at=profile_entity.updated_at,
         )
@@ -232,6 +265,10 @@ class UserProfileMapper:
             journey_progress_seed_percent=profile_domain.journey_progress_seed_percent,
             daily_water_goal_ml=profile_domain.daily_water_goal_ml,
             profile_target_revision=profile_domain.profile_target_revision,
+            weight_loss_kg_per_week=profile_domain.weight_loss_kg_per_week,
+            weight_gain_kg_per_week=profile_domain.weight_gain_kg_per_week,
+            pace_clinician_disclaimer=profile_domain.pace_clinician_disclaimer,
+            weight_loss_pace_reset_on=profile_domain.weight_loss_pace_reset_on,
         )
         profile.preference_entries = build_profile_preference_entries(profile_domain)
         return profile

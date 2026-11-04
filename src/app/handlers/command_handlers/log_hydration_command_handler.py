@@ -19,7 +19,8 @@ from src.domain.services.hydration_catalog_service import find_by_id, localized_
 from src.domain.utils.timezone_utils import (
     format_iso_utc,
     get_zone_info,
-    noon_utc_for_date,
+    is_same_day_log,
+    log_moment,
     resolve_user_timezone_async,
     utc_now,
 )
@@ -49,23 +50,23 @@ class LogHydrationCommandHandler(EventHandler[LogHydrationCommand, dict]):
             raise ValueError("Drink is not a hydration drink")
 
         async with self.uow_factory() as uow:
+            user_tz = await resolve_user_timezone_async(
+                cmd.user_id, uow, cmd.header_timezone
+            )
             now = utc_now()
-            if cmd.target_date:
-                user_tz = await resolve_user_timezone_async(
-                    cmd.user_id, uow, cmd.header_timezone
-                )
-                log_date = cmd.target_date
-                log_dt = noon_utc_for_date(log_date, user_tz)
-            else:
-                log_dt = now
-                user_tz = await resolve_user_timezone_async(
-                    cmd.user_id, uow, cmd.header_timezone
-                )
-                tz = get_zone_info(user_tz)
-                log_date = log_dt.astimezone(tz).date()
+            log_dt = log_moment(cmd.target_date, user_tz, now)
+            log_date = cmd.target_date or (
+                log_dt.astimezone(get_zone_info(user_tz)).date()
+            )
 
             credited_ml = drink.credited_ml_for_volume(cmd.volume_ml)
-            meal = water_meal_for(drink, cmd.volume_ml, log_dt, cmd.user_id)
+            meal = water_meal_for(
+                drink,
+                cmd.volume_ml,
+                log_dt,
+                cmd.user_id,
+                logged_on_day=is_same_day_log(cmd.target_date, user_tz, now),
+            )
             saved = await uow.meals.save(meal)
             macros = (
                 saved.nutrition.macros

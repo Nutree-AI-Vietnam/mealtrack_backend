@@ -43,6 +43,7 @@ from .meal.meal_instruction_step import MealInstructionStepORM
 
 # Translation models (meals + food items)
 from .meal.meal_translation_model import MealTranslationORM
+from .meal.scan_feedback import ScanFeedbackORM
 from .meal_image_cache import MealImageCacheModel
 from .meal_recommendation import (
     AllergenReferenceORM,
@@ -51,13 +52,15 @@ from .meal_recommendation import (
     MealCatalogMicronutrientEnrichmentORM,
     MealCatalogORM,
     MealCatalogStepORM,
-    MealRecommendationOperationORM,
-    MealRecommendationORM,
 )
 from .meal_write_operation import MealWriteOperationORM
 
 # Notification models
-from .notification import NotificationPreferencesORM, UserFcmTokenORM
+from .notification import (
+    NotificationOutboxORM,
+    NotificationPreferencesORM,
+    UserFcmTokenORM,
+)
 from .nutrition.food_item import FoodItemORM
 
 # Nutrition models
@@ -73,7 +76,14 @@ from .saved_suggestion import SavedSuggestionModel
 from .saved_suggestion_item import SavedSuggestionItemModel
 from .saved_suggestion_step import SavedSuggestionStepModel
 from .serving_phrase_translation import ServingPhraseTranslationModel
+from .streak_restore import StreakRestoreLedgerORM
 from .subscription import Subscription
+from .supplement import (
+    SupplementIntakeORM,
+    SupplementProductBarcodeORM,
+    SupplementProductORM,
+    UserSupplementORM,
+)
 from .user.body_fat_visual_profile import BodyFatVisualProfile
 from .user.profile import UserProfile
 from .user.profile_preference import UserProfilePreference
@@ -143,6 +153,7 @@ from .weekly_recap import WeeklyRecapORM
 from .weight_entry import WeightEntryORM
 
 __all__ = [
+    "ScanFeedbackORM",
     "CatalogPreparationJobORM",
     "CatalogRecipeTranslationORM",
     "CatalogPublicationVersionORM",
@@ -181,6 +192,7 @@ __all__ = [
     "FoodItemTranslationORM",
     # Test models
     # Notification models
+    "NotificationOutboxORM",
     "NotificationPreferencesORM",
     "UserFcmTokenORM",
     # Feature flags
@@ -212,8 +224,6 @@ __all__ = [
     "MealCatalogIngredientORM",
     "MealCatalogStepORM",
     "MealCatalogMicronutrientEnrichmentORM",
-    "MealRecommendationORM",
-    "MealRecommendationOperationORM",
     "PendingMealImageResolutionModel",
     # Referral system
     "ReferralCode",
@@ -226,6 +236,13 @@ __all__ = [
     "DurableWriteRecordORM",
     # Movement tracking
     "MovementEntryORM",
+    # Streak restores
+    "StreakRestoreLedgerORM",
+    # Supplements
+    "SupplementIntakeORM",
+    "SupplementProductBarcodeORM",
+    "SupplementProductORM",
+    "UserSupplementORM",
     "WeeklyMealPlanORM",
     "WeeklyMealPlanSlotORM",
     "WeeklyPlanLateLegacySlotRepairORM",

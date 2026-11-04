@@ -34,6 +34,12 @@ def publisher():
 
 
 @pytest.fixture(autouse=True)
+def push_enabled():
+    with patch(f"{LIFECYCLE}.engagement_push_enabled", return_value=True):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def revenuecat():
     """RevenueCat answers: no renewing plan and no access unless a test sets them.
 

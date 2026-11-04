@@ -7,6 +7,7 @@ on nutrition/meal records.
 """
 
 import logging
+from datetime import date
 from typing import Any
 
 from src.api.exceptions import AuthorizationException
@@ -66,34 +67,11 @@ class DeleteMealCommandHandler(EventHandler[DeleteMealCommand, dict[str, Any]]):
         meal_delete_event = None
         log_date = None
         async with self.uow_factory() as uow:
-            meal = await uow.meals.find_by_id(command.meal_id)
-            if meal is not None:
-                if meal.user_id != command.user_id:
-                    raise AuthorizationException(
-                        "You do not have permission to delete this meal"
-                    )
-                # Recommended-meal logs set meal_recommendations.logged_meal_id
-                # with ON DELETE SET NULL. Clearing only the FK leaves logged_at
-                # set and violates ck_meal_recommendations_logged_coherent.
-                plans = getattr(uow, "meal_recommendation_plans", None)
-                if plans is not None:
-                    await plans.clear_links_for_deleted_meal(meal_id=command.meal_id)
-                await uow.meals.delete(command.meal_id)
-                user_tz = await resolve_user_timezone_async(command.user_id, uow)
-                tz = get_zone_info(user_tz)
-                created_at_dt = meal.created_at or utc_now()
-                if created_at_dt.tzinfo is None:
-                    created_at_dt = created_at_dt.replace(tzinfo=UTC)
-                log_date = created_at_dt.astimezone(tz).date()
-                meal_delete_event = MealDeletedEvent(
-                    environment=self.environment,
-                    aggregate_id=command.meal_id,
-                    data={
-                        "user_id": command.user_id,
-                        "meal_id": command.meal_id,
-                        "meal_date": log_date.isoformat(),
-                    },
-                )
+            removed = await remove_meal(
+                uow, command.user_id, command.meal_id, self.environment
+            )
+            if removed is not None:
+                meal_delete_event, log_date = removed
             else:
                 hydration_entries = getattr(uow, "hydration_entries", None)
                 if hydration_entries is not None:
@@ -187,3 +165,37 @@ class DeleteMealCommandHandler(EventHandler[DeleteMealCommand, dict[str, Any]]):
                 else "Meal deleted, ingredient data preserved"
             ),
         }
+
+
+async def remove_meal(
+    uow: Any, user_id: str, meal_id: str, environment: str
+) -> tuple[MealDeletedEvent, date] | None:
+    """Hard-delete one of the user's meals in the caller's unit of work; None
+    when it does not exist. The caller publishes and purges after commit."""
+    meal = await uow.meals.find_by_id(meal_id)
+    if meal is None:
+        return None
+    if meal.user_id != user_id:
+        raise AuthorizationException("You do not have permission to delete this meal")
+    # Weekly plan slots logged with this meal are released the same way, so
+    # the slot can be logged or swapped again.
+    weekly_plans = getattr(uow, "weekly_meal_plans", None)
+    clear_weekly = getattr(weekly_plans, "clear_links_for_deleted_meal", None)
+    if callable(clear_weekly):
+        await clear_weekly(meal_id=meal_id)
+    await uow.meals.delete(meal_id)
+    user_tz = await resolve_user_timezone_async(user_id, uow)
+    created_at_dt = meal.created_at or utc_now()
+    if created_at_dt.tzinfo is None:
+        created_at_dt = created_at_dt.replace(tzinfo=UTC)
+    log_date = created_at_dt.astimezone(get_zone_info(user_tz)).date()
+    event = MealDeletedEvent(
+        environment=environment,
+        aggregate_id=meal_id,
+        data={
+            "user_id": user_id,
+            "meal_id": meal_id,
+            "meal_date": log_date.isoformat(),
+        },
+    )
+    return event, log_date

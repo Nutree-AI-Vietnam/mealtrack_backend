@@ -210,7 +210,7 @@ async def test_lifetime_bought_by_a_past_subscriber_is_not_reported_again(
     assert _published(publisher) == [("subscription_initial_purchase", MONTHLY)]
 
 
-# --- Referral credit ---
+# --- Referral credit and pushes ---
 
 
 async def test_a_first_lifetime_purchase_credits_the_referrer(uow, deliver):
@@ -226,3 +226,9 @@ async def test_the_upgrade_does_not_credit_the_referrer_twice(uow, deliver):
 
     assert uow.referrals.conversion.status == "converted"
     assert uow.referrals.balance == 50_000
+
+
+async def test_a_lifetime_purchase_drops_a_pending_payment_failed_push(uow, deliver):
+    await deliver(handle_lifetime_purchase, lifetime())
+
+    uow.engagement_pushes.delete_pending.assert_awaited_once()

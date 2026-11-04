@@ -8,6 +8,8 @@ from src.domain.services.prompts.prompt_constants import (
     SEASONING_RULES,
     JSON_SCHEMAS,
     GOAL_GUIDANCE,
+    HEALTHY_EASY_RULE_LINE,
+    default_cooking_minutes,
 )
 from src.domain.services.prompts.prompt_template_manager import PromptTemplateManager
 
@@ -220,3 +222,78 @@ class TestTokenReduction:
         # Target ~750 tokens (grew with MACRO_ACCURACY_RULES, DECOMPOSITION_RULES, EMOJI_RULES,
         # and English-only enforcement for multilingual translation pipeline)
         assert estimated_tokens < 750, f"Prompt too long: ~{estimated_tokens} tokens"
+
+
+class TestHealthyAndEasy:
+    """Every generated dish has to be healthy and cookable on a weekday."""
+
+    def test_names_prompt_asks_for_healthy_home_cooking(self):
+        prompt = PromptTemplateManager.build_meal_names_prompt(
+            meal_type="lunch",
+            target_calories=600,
+        )
+
+        assert HEALTHY_EASY_RULE_LINE in prompt
+
+    def test_recipe_prompt_spells_out_the_healthy_rules(self):
+        prompt = PromptTemplateManager.build_recipe_details_prompt(
+            meal_name="Grilled chicken with greens",
+            meal_type="lunch",
+            target_calories=600,
+        )
+
+        assert "never deep-fry" in prompt
+        assert "No processed meat" in prompt
+        assert "no special equipment" in prompt
+
+    def test_breakfast_gets_the_tightest_time_budget(self):
+        """A breakfast nobody has time to cook is a breakfast nobody eats."""
+        prompt = PromptTemplateManager.build_meal_names_prompt(
+            meal_type="breakfast",
+            target_calories=400,
+        )
+
+        assert "≤15min" in prompt
+
+    def test_recipe_is_capped_in_time_even_when_nobody_asked(self):
+        prompt = PromptTemplateManager.build_recipe_details_prompt(
+            meal_name="Steamed fish with rice",
+            meal_type="dinner",
+            target_calories=700,
+        )
+
+        assert "Total prep_time ≤30 min" in prompt
+
+    def test_the_caller_can_still_ask_for_less_time(self):
+        prompt = PromptTemplateManager.build_recipe_details_prompt(
+            meal_name="Tofu stir-fry",
+            meal_type="dinner",
+            target_calories=500,
+            cooking_time_minutes=20,
+        )
+
+        assert "Total prep_time ≤20 min" in prompt
+        assert "≤30 min" not in prompt
+
+    def test_an_unknown_meal_type_falls_back_to_the_general_budget(self):
+        assert default_cooking_minutes("brunch") == 30
+        assert default_cooking_minutes("") == 30
+        assert default_cooking_minutes("Breakfast") == 15
+
+    def test_the_single_meal_prompt_carries_the_same_rule(self):
+        prompt = PromptTemplateManager.build_suggestion_prompt(
+            meal_type="breakfast",
+            target_calories=400,
+        )
+
+        assert HEALTHY_EASY_RULE_LINE in prompt
+        assert "≤15min" in prompt
+
+    def test_discovery_names_are_healthy_and_quick_too(self):
+        prompt = PromptTemplateManager.build_discovery_prompt(
+            meal_type="breakfast",
+            target_calories=400,
+        )
+
+        assert HEALTHY_EASY_RULE_LINE in prompt
+        assert "≤15min" in prompt

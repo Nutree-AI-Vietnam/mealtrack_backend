@@ -89,17 +89,30 @@ async def update_notification_preferences(
 
     Updates the notification preferences for the user.
     Only provided fields will be updated.
+
+    Any per-meal switch in the request wins over `meal_reminders_enabled`.
+    A request with only `meal_reminders_enabled` (older apps) sets all three
+    meal switches when it differs from whether any of them is on. The response
+    always reports `meal_reminders_enabled` as breakfast or lunch or dinner.
     """
     command = UpdateNotificationPreferencesCommand(
         user_id=user_id,
         meal_reminders_enabled=request.meal_reminders_enabled,
         daily_summary_enabled=request.daily_summary_enabled,
         hydration_reminders_enabled=request.hydration_reminders_enabled,
+        streak_reminders_enabled=request.streak_reminders_enabled,
+        reengagement_enabled=request.reengagement_enabled,
+        progress_updates_enabled=request.progress_updates_enabled,
+        offers_enabled=request.offers_enabled,
         breakfast_time_minutes=request.breakfast_time_minutes,
         lunch_time_minutes=request.lunch_time_minutes,
         dinner_time_minutes=request.dinner_time_minutes,
         daily_summary_time_minutes=request.daily_summary_time_minutes,
         language=request.language,
+        breakfast_reminder_enabled=request.breakfast_reminder_enabled,
+        lunch_reminder_enabled=request.lunch_reminder_enabled,
+        dinner_reminder_enabled=request.dinner_reminder_enabled,
+        hydration_reminder_time_minutes=request.hydration_reminder_time_minutes,
     )
 
     result = await event_bus.send(command)

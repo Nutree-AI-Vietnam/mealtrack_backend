@@ -50,3 +50,6 @@ class SaveUserOnboardingCommand(Command):
     custom_protein_g: Optional[float] = None
     custom_carbs_g: Optional[float] = None
     custom_fat_g: Optional[float] = None
+    weight_loss_kg_per_week: Optional[float] = None
+    weight_gain_kg_per_week: float | None = None
+    pace_clinician_disclaimer: Optional[bool] = None

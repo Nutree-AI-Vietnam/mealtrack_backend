@@ -13,10 +13,15 @@ from src.app.events.base import EventHandler, handles
 from src.app.queries.user import GetUserMetricsQuery
 from src.domain.cache.cache_keys import CacheKeys
 from src.domain.ports.cache_port import CachePort
+from src.domain.services.tdee_service import kg_to_lb
 from src.infra.database.models.user.profile import UserProfile
 from src.infra.database.uow_async import AsyncUnitOfWork
 
 logger = logging.getLogger(__name__)
+
+# Keys added after metrics were already being cached. A payload without one
+# would answer empty for stored data, so it is rebuilt once.
+_KEYS_ADDED_SINCE_CACHING = ("date_of_birth", "allergies", "health_conditions")
 
 
 @handles(GetUserMetricsQuery)
@@ -31,7 +36,9 @@ class GetUserMetricsQueryHandler(EventHandler[GetUserMetricsQuery, Dict[str, Any
         cache_key, ttl = CacheKeys.user_metrics(query.user_id)
         if self.cache_service:
             cached = await self.cache_service.get_json(cache_key)
-            if cached is not None:
+            if cached is not None and all(
+                key in cached for key in _KEYS_ADDED_SINCE_CACHING
+            ):
                 cached_revision = cached.get("profile_target_revision")
                 if cached_revision == await self._current_profile_revision(
                     query.user_id
@@ -64,6 +71,9 @@ class GetUserMetricsQueryHandler(EventHandler[GetUserMetricsQuery, Dict[str, Any
             return {
                 "user_id": query.user_id,
                 "age": profile.age,
+                "date_of_birth": (
+                    profile.date_of_birth.isoformat() if profile.date_of_birth else None
+                ),
                 "gender": profile.gender,
                 "height_cm": profile.height_cm,
                 "weight_kg": profile.weight_kg,
@@ -80,6 +90,16 @@ class GetUserMetricsQueryHandler(EventHandler[GetUserMetricsQuery, Dict[str, Any
                     profile, "journey_progress_seed_percent", 0.0
                 ),
                 "updated_at": profile.updated_at,
+                "weight_loss_kg_per_week": profile.weight_loss_kg_per_week,
+                "dietary_preferences": list(profile.dietary_preferences or []),
+                "allergies": list(profile.allergies or []),
+                "health_conditions": list(profile.health_conditions or []),
+                "weight_loss_lb_per_week": kg_to_lb(profile.weight_loss_kg_per_week),
+                "weight_gain_kg_per_week": profile.weight_gain_kg_per_week,
+                "weight_gain_lb_per_week": kg_to_lb(profile.weight_gain_kg_per_week),
+                "pace_clinician_disclaimer": bool(
+                    profile.pace_clinician_disclaimer or False
+                ),
                 "profile_target_revision": profile.profile_target_revision,
                 "target_revision": profile.profile_target_revision,
             }

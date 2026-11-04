@@ -25,6 +25,9 @@ PERMANENT_NOT_RETRYABLE_CODES = frozenset(
         "CHAT_STOPPED",
         "INVALID_JOB_INPUT",
         "NUTRITION_UNIT_INVALID",
+        "INVALID_RECIPE_SOURCE",
+        "RECIPE_URL_NOT_ALLOWED",
+        "RECIPE_SOURCE_REJECTED",
     }
 )
 # The AI gave a bad answer; another manual attempt may succeed, an automatic
@@ -34,6 +37,10 @@ PERMANENT_RETRYABLE_CODES = frozenset(
         "AI_OUTPUT_INVALID",
         "NUTRITION_INTEGRITY_REJECTED",
         "NOT_FOOD_TEXT",
+        # Another try can succeed: the platform may let the video through,
+        # or a re-read may find the recipe.
+        "NOT_A_RECIPE",
+        "RECIPE_VIDEO_UNAVAILABLE",
     }
 )
 # Infrastructure trouble; retried automatically. Unknown codes are treated
@@ -42,6 +49,7 @@ TRANSIENT_CODES = frozenset(
     {
         "AI_UNAVAILABLE",
         "AI_TIMEOUT",
+        "DB_UNAVAILABLE",
         "NUTRITION_PROVIDER_UNAVAILABLE",
         "CHAT_PROVIDER_UNAVAILABLE",
         "CHAT_BUSY",
@@ -50,6 +58,7 @@ TRANSIENT_CODES = frozenset(
         "WORKER_INTERRUPTED",
         "INTERNAL_ERROR",
         "FAILED_TO_ANALYZE_MEAL_IMAGE",
+        "RECIPE_SOURCE_UNREACHABLE",
     }
 )
 

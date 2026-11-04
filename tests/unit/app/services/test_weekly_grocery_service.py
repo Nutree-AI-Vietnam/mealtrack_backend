@@ -21,6 +21,7 @@ from src.domain.services.meal_recommendation.ingredient_quantity_normalization i
     normalize_ingredient_quantity,
 )
 from src.domain.services.weekly_meal_planner.grocery_projection import (
+    CountedUnit,
     SYNTHETIC_INGREDIENT_ID_OFFSET,
     GroceryIngredient,
     GroceryInteraction,
@@ -138,7 +139,12 @@ async def test_groceries_scale_people_and_subtract_pantry():
 
 
 @pytest.mark.asyncio
-async def test_groceries_do_not_silently_scale_unknown_servings():
+async def test_a_recipe_that_does_not_state_servings_is_estimated_by_weight():
+    """A crawled recipe is written for the pot, so scaling by 1 under-buys.
+
+    150 g of weighed ingredients reads as one serving, so a plan for two
+    people buys twice it - and says the number is estimated, not verified.
+    """
     plan = _plan()
 
     class CatalogWithoutServing(_Catalog):
@@ -159,7 +165,43 @@ async def test_groceries_do_not_silently_scale_unknown_servings():
     categories = await WeeklyGroceryService().calculate(UowWithoutServing(), plan)
 
     item = categories[0].items[0]
-    assert item.total_needed == 150
+    assert item.total_needed == 300
+    assert item.quantity_confidence == "estimated"
+
+
+@pytest.mark.asyncio
+async def test_a_recipe_measured_only_in_pieces_is_still_left_unscaled():
+    """Nothing here is weighed, so there is no honest serving to divide by."""
+    plan = _plan()
+
+    class CountOnlyCatalog(_Catalog):
+        async def get_meal(self, recipe_id):
+            meal = await super().get_meal(recipe_id)
+            return meal.__class__(
+                **{
+                    **meal.__dict__,
+                    "base_servings": None,
+                    "serving_confidence": "unknown",
+                    "ingredients": (
+                        CatalogMealIngredient(
+                            food_reference_id=7,
+                            display_name="Tomato",
+                            quantity=Decimal("3"),
+                            unit="quả",
+                            category="produce",
+                        ),
+                    ),
+                }
+            )
+
+    class CountOnlyUow:
+        catalog_recipes = CountOnlyCatalog()
+        weekly_meal_plans = _Plans()
+
+    categories = await WeeklyGroceryService().calculate(CountOnlyUow(), plan)
+
+    item = categories[0].items[0]
+    assert item.total_needed == 3
     assert item.quantity_confidence == "unscaled"
 
 
@@ -249,6 +291,70 @@ def test_quantity_normalization_only_uses_exact_conversions():
 def test_eggplant_is_produce_while_eggs_are_protein():
     assert _resolve_grocery_category("Eggplant", None) == "fresh_produce"
     assert _resolve_grocery_category("2 eggs", None) == "protein"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("algorithm_version", "expected_days"),
+    [("v3-compact", {0: 600}), ("v2", {0: 300, 1: 300})],
+)
+async def test_a_compact_week_buys_the_leftover_lunch_with_its_dinner(
+    algorithm_version, expected_days
+):
+    dinner_then_lunch = {(0, 2), (1, 1)}
+    plan = replace(
+        _plan(),
+        algorithm_version=algorithm_version,
+        slots=tuple(
+            replace(
+                slot,
+                recipe_id="recipe-1"
+                if (slot.day_index, slot.slot_index) in dinner_then_lunch
+                else None,
+            )
+            for slot in _plan().slots
+        ),
+    )
+
+    categories = await WeeklyGroceryService().calculate(_Uow(), plan)
+
+    item = categories[0].items[0]
+    assert item.total_needed == 600
+    assert {
+        day["day_index"]: day["total_needed"] for day in item.daily_amounts
+    } == expected_days
+
+
+def test_seasonings_are_staples_whatever_the_catalog_category():
+    assert _resolve_grocery_category("Nước mắm", "pantry") == "staples"
+    assert _resolve_grocery_category("Tỏi băm", "produce") == "staples"
+    assert _resolve_grocery_category("Ớt chuông", "produce") == "fresh_produce"
+
+
+@pytest.mark.asyncio
+async def test_staples_follow_the_food_to_buy():
+    class CatalogWithSalt(_Catalog):
+        async def get_meal(self, recipe_id):
+            meal = await super().get_meal(recipe_id)
+            salt = CatalogMealIngredient(
+                food_reference_id=None,
+                display_name="Muối",
+                quantity=Decimal("5"),
+                unit="g",
+            )
+            return replace(meal, ingredients=(salt, *meal.ingredients))
+
+    uow = type(
+        "Uow", (), {"catalog_recipes": CatalogWithSalt(), "weekly_meal_plans": _Plans()}
+    )()
+
+    categories = await WeeklyGroceryService().calculate(uow, _plan())
+
+    assert [category.category for category in categories] == [
+        "fresh_produce",
+        "staples",
+    ]
+    assert [item.name for item in categories[-1].items] == ["Muối"]
 
 
 @pytest.mark.asyncio
@@ -525,3 +631,321 @@ def test_slot_from_meal_non_contiguous_positions_does_not_collide_and_override_w
     remaining_names = [item.name for item in remaining_after_override]
     assert remaining_names == ["Rice", "Special Sauce", "Garnish Herb"]
     assert "Chicken" not in remaining_names
+
+
+@pytest.mark.asyncio
+async def test_skipped_slots_buy_no_groceries():
+    plan = _plan()
+    skipped = replace(
+        plan,
+        slots=tuple(
+            replace(slot, is_skipped=True) if slot.recipe_id else slot
+            for slot in plan.slots
+        ),
+    )
+    service = WeeklyGroceryService()
+
+    planned = await service.calculate(_Uow(), plan)
+    after_skip = await service.calculate(_Uow(), skipped)
+
+    assert [item.ingredient_id for c in planned for item in c.items] == [7]
+    assert after_skip == ()
+    assert service.project(skipped, [await _Catalog().get_meal("recipe-1")]) == ()
+
+
+def _saved_recipe(**overrides):
+    from src.domain.model.weekly_meal_planner import SavedRecipeSnapshot
+
+    data = {
+        "meal_name": "Tomato eggs",
+        "macros": {"protein": 12, "carbs": 8, "fat": 9},
+        "servings": 4,
+        "ingredients": [
+            # Same food as the catalog recipe's tomato: one grocery line.
+            {"name": "Tomato", "amount": 400, "unit": "g", "food_reference_id": 7},
+            {"name": "Eggs", "amount": 8, "unit": ""},
+            {"name": "Fish sauce", "amount": 0, "unit": "", "grams": 20},
+            {"name": "Salt", "amount": 0, "unit": ""},
+        ],
+        "recipe_import": {"servings_estimated": False},
+    }
+    data.update(overrides)
+    return SavedRecipeSnapshot.from_saved_suggestion("recipe_import_imp-9", data)
+
+
+def _plan_with_saved(*, skipped=False, recipe=None):
+    plan = _plan()
+    return replace(
+        plan,
+        slots=tuple(
+            replace(
+                slot,
+                saved_suggestion_id="recipe_import_imp-9",
+                saved_recipe=recipe or _saved_recipe(),
+                is_skipped=skipped,
+            )
+            if slot.id == "slot-2-1"
+            else slot
+            for slot in plan.slots
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_saved_recipe_lines_join_the_list_scaled_to_the_plans_people():
+    categories = await WeeklyGroceryService().calculate(_Uow(), _plan_with_saved())
+    items = {item.name: item for category in categories for item in category.items}
+
+    # Catalog tomato 150 g x 2 people + saved 400 g x 2/4 people, minus 100 g.
+    tomato = items["Tomato"]
+    assert tomato.ingredient_id == 7
+    assert tomato.total_needed == 500
+    assert sorted(day["day_index"] for day in tomato.daily_amounts) == [0, 2]
+    eggs = items["Eggs"]
+    assert (eggs.ingredient_id, eggs.unit, eggs.total_needed) == (
+        deterministic_ingredient_id("Eggs"),
+        "piece",
+        4,
+    )
+    assert eggs.quantity_confidence == "verified"
+    assert items["Fish sauce"].total_needed == 10
+    assert "Salt" not in items
+
+
+@pytest.mark.asyncio
+async def test_skipped_saved_slot_buys_nothing():
+    categories = await WeeklyGroceryService().calculate(
+        _Uow(), _plan_with_saved(skipped=True)
+    )
+    names = {item.name for category in categories for item in category.items}
+
+    assert names == {"Tomato"}
+
+
+def test_ai_meal_idea_amounts_count_as_one_estimated_serving():
+    from src.domain.model.weekly_meal_planner import SavedRecipeSnapshot
+
+    idea = SavedRecipeSnapshot.from_saved_suggestion(
+        "sugg-1",
+        {
+            "meal_name": "Tofu bowl",
+            "macros": {"protein": 20, "carbs": 30, "fat": 10},
+            "ingredients": [{"name": "Tofu", "amount": 150, "unit": "g"}],
+        },
+    )
+
+    (item,) = WeeklyGroceryService().project(_plan_with_saved(recipe=idea), ())
+    assert (item.name, item.total_needed, item.quantity_confidence) == (
+        "Tofu",
+        300,
+        "estimated",
+    )
+
+
+def _merge_slot(recipe_id: str, lines: tuple, day_index: int = 0) -> GrocerySlot:
+    return GrocerySlot(
+        recipe_id=recipe_id,
+        publication_status="published",
+        nutrition_status="ready",
+        is_active=True,
+        base_servings=1,
+        serving_confidence="verified",
+        people=1,
+        ingredients=lines,
+        day_index=day_index,
+    )
+
+
+def _line(position: int, name: str, grams: str, food_reference_id: int | None):
+    return GroceryIngredient(
+        position=position,
+        food_reference_id=food_reference_id,
+        name=name,
+        quantity=Decimal(grams),
+        unit="g",
+        category="protein",
+    )
+
+
+def test_the_same_food_under_two_names_becomes_one_line():
+    items = aggregate_grocery(
+        [
+            _merge_slot("r1", (_line(0, "thịt heo", "200", 11),), day_index=0),
+            _merge_slot("r2", (_line(0, "thịt lợn", "300", 12),), day_index=2),
+        ],
+        [],
+    )
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.total_needed == 500.0
+    # One wording, and the day view reads the same merged line.
+    assert item.name in {"thịt heo", "thịt lợn"}
+    assert [(day, needed) for day, needed, _ in item.daily_amounts] == [
+        (0, 200.0),
+        (2, 300.0),
+    ]
+
+
+def test_the_merged_line_keeps_a_real_catalog_id():
+    items = aggregate_grocery(
+        [
+            _merge_slot("r1", (_line(0, "hành ống", "50", None),)),
+            _merge_slot("r2", (_line(0, "hành lá", "50", 31),)),
+        ],
+        [],
+    )
+
+    assert len(items) == 1
+    assert items[0].ingredient_id == 31
+
+
+def test_the_most_used_wording_names_the_merged_line():
+    items = aggregate_grocery(
+        [
+            _merge_slot("r1", (_line(0, "thịt lợn", "100", 11),)),
+            _merge_slot("r2", (_line(0, "thịt lợn", "100", 11),)),
+            _merge_slot("r3", (_line(0, "thịt heo", "100", 12),)),
+        ],
+        [],
+    )
+
+    assert [item.name for item in items] == ["thịt lợn"]
+
+
+def test_english_lines_are_never_relabelled_in_vietnamese():
+    items = aggregate_grocery(
+        [_merge_slot("r1", (_line(0, "Tomato", "100", 21),))],
+        [],
+    )
+
+    assert [item.name for item in items] == ["Tomato"]
+
+
+def test_pantry_stock_and_ticks_follow_every_merged_food_id():
+    items = aggregate_grocery(
+        [
+            _merge_slot("r1", (_line(0, "thịt heo", "200", 11),)),
+            _merge_slot("r2", (_line(0, "thịt lợn", "300", 12),)),
+        ],
+        [
+            PantryAvailability(
+                food_reference_id=12,
+                available_amount=Decimal("500"),
+                available_unit="g",
+            )
+        ],
+        [GroceryInteraction(food_reference_id=12, checked=True)],
+    )
+
+    assert len(items) == 1
+    assert items[0].status == "owned"
+    assert items[0].checked is True
+
+
+def test_different_cuts_stay_separate_purchases():
+    items = aggregate_grocery(
+        [
+            _merge_slot("r1", (_line(0, "thịt ba chỉ", "200", 11),)),
+            _merge_slot("r2", (_line(0, "sườn heo", "300", 13),)),
+        ],
+        [],
+    )
+
+    assert len(items) == 2
+
+
+def test_preparation_words_do_not_split_a_line():
+    items = aggregate_grocery(
+        [
+            _merge_slot("r1", (_line(0, "Cà rốt (thái lát)", "100", None),)),
+            _merge_slot("r2", (_line(0, "cà rốt", "150", None),)),
+        ],
+        [],
+    )
+
+    assert len(items) == 1
+    assert items[0].total_needed == 250.0
+
+
+def test_eggs_are_bought_by_the_piece_not_by_the_gram():
+    """Nobody walks into a market and asks for 1090 g of egg."""
+    items = aggregate_grocery(
+        [_merge_slot("r1", (_line(0, "trứng gà", "330", 7),))],
+        [],
+        counted_units={7: CountedUnit(grams=55.0, unit_name="quả")},
+    )
+
+    item = items[0]
+    assert item.total_needed == 330
+    assert item.count_needed == 6
+    assert item.shopping_label == "6 quả"
+
+
+def test_a_part_egg_still_means_buying_a_whole_one():
+    items = aggregate_grocery(
+        [_merge_slot("r1", (_line(0, "trứng gà", "140", 7),))],
+        [],
+        counted_units={7: CountedUnit(grams=55.0, unit_name="quả")},
+    )
+
+    # 140 g is two and a half eggs; the shopper buys three.
+    assert items[0].count_needed == 3
+
+
+def test_rounding_noise_does_not_buy_another_egg():
+    """A scaled portion landing at 2.02 eggs is two eggs."""
+    items = aggregate_grocery(
+        [_merge_slot("r1", (_line(0, "trứng gà", "111", 7),))],
+        [],
+        counted_units={7: CountedUnit(grams=55.0, unit_name="quả")},
+    )
+
+    assert items[0].count_needed == 2
+
+
+def test_a_food_with_no_serving_size_keeps_its_grams():
+    """The same refusal to invent weights as everywhere else."""
+    items = aggregate_grocery(
+        [_merge_slot("r1", (_line(0, "thịt heo", "500", 11),))],
+        [],
+        counted_units={7: CountedUnit(grams=55.0, unit_name="quả")},
+    )
+
+    item = items[0]
+    assert item.count_needed is None
+    assert item.shopping_label == "500 g"
+
+
+def test_a_line_already_counted_in_pieces_is_not_converted_twice():
+    items = aggregate_grocery(
+        [
+            _merge_slot(
+                "r1",
+                (
+                    GroceryIngredient(
+                        position=0,
+                        food_reference_id=7,
+                        name="trứng gà",
+                        quantity=Decimal("3"),
+                        unit="quả",
+                    ),
+                ),
+            )
+        ],
+        [],
+        counted_units={7: CountedUnit(grams=55.0, unit_name="quả")},
+    )
+
+    assert items[0].count_needed is None
+    assert items[0].total_needed == 3
+
+
+def test_one_of_something_uses_its_singular_name():
+    items = aggregate_grocery(
+        [_merge_slot("r1", (_line(0, "trứng gà", "50", 7),))],
+        [],
+        counted_units={7: CountedUnit(grams=55.0, unit_name="egg", plural_name="eggs")},
+    )
+
+    assert items[0].shopping_label == "1 egg"

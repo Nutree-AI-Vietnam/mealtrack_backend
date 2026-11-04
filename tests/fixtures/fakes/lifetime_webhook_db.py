@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager, contextmanager
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import create_autospec
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -20,6 +21,9 @@ from sqlalchemy.orm import sessionmaker
 from src.domain.constants.lifetime_products import (
     LIFETIME_PRODUCT_ID,
     LIFETIME_UPGRADE_PRODUCT_ID,
+)
+from src.domain.ports.engagement_push_repository_port import (
+    EngagementPushRepositoryPort,
 )
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.base import Base
@@ -60,7 +64,7 @@ USER = SimpleNamespace(
 class SqliteAsyncSession:
     """The AsyncSession calls the webhook makes, over a sync SQLite session.
 
-    Savepoints are a no-op.
+    Savepoints are a no-op: the push outbox they guard is a spy here.
     """
 
     def __init__(self, session: Any) -> None:
@@ -114,11 +118,14 @@ def open_subscription_uow() -> Iterator[SimpleNamespace]:
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine, autoflush=False)()
     async_session = SqliteAsyncSession(session)
+    pushes = create_autospec(EngagementPushRepositoryPort, instance=True)
+    pushes.enqueue.return_value = True
     try:
         yield SimpleNamespace(
             session=async_session,
             subscriptions=AsyncSubscriptionRepository(async_session),
             referrals=Referrals(),
+            engagement_pushes=pushes,
         )
     finally:
         session.close()

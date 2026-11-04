@@ -11,6 +11,9 @@ if TYPE_CHECKING:
         BodyFatVisualProfileRepositoryPort,
     )
     from src.domain.ports.chat_repository_port import ChatRepositoryPort
+    from src.domain.ports.engagement_push_repository_port import (
+        EngagementPushRepositoryPort,
+    )
     from src.domain.ports.favorite_meal_repository_port import (
         FavoriteMealRepositoryPort,
     )
@@ -23,7 +26,11 @@ if TYPE_CHECKING:
     from src.domain.ports.saved_suggestion_repository_port import (
         SavedSuggestionRepositoryPort,
     )
+    from src.domain.ports.streak_restore_repository_port import (
+        StreakRestoreRepositoryPort,
+    )
     from src.domain.ports.subscription_repository_port import SubscriptionRepositoryPort
+    from src.domain.ports.supplement_repository_port import SupplementRepositoryPort
     from src.domain.ports.user_repository_port import UserRepositoryPort
     from src.domain.ports.weekly_recap_repository_port import (
         WeeklyRecapRepositoryPort,
@@ -38,7 +45,6 @@ class AsyncUnitOfWorkPort(ABC):
     users: UserRepositoryPort
     meals: MealRepositoryPort
     favorite_meals: FavoriteMealRepositoryPort
-    meal_recommendation_plans: Any
     meal_suggestions: MealSuggestionRepositoryPort
     subscriptions: SubscriptionRepositoryPort
     notifications: NotificationRepositoryPort
@@ -59,11 +65,15 @@ class AsyncUnitOfWorkPort(ABC):
     promo_codes: Any
     referrals: Any
     meal_write_operations: Any
+    scan_feedback: Any
     chat: ChatRepositoryPort
     weekly_meal_plans: Any
     weekly_recaps: WeeklyRecapRepositoryPort
     ai_jobs: AiJobRepositoryPort
     push_tokens: PushTokenRepositoryPort
+    engagement_pushes: EngagementPushRepositoryPort
+    streak_restores: StreakRestoreRepositoryPort
+    supplements: SupplementRepositoryPort
 
     @abstractmethod
     async def __aenter__(self) -> AsyncUnitOfWorkPort:

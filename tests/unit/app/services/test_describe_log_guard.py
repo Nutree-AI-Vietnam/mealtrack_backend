@@ -12,6 +12,7 @@ from src.api.exceptions import (
     ValidationException,
     create_http_exception,
 )
+from src.app.services import daily_quota as quota_module
 from src.app.services import describe_log_guard as guard_module
 from src.app.services.describe_log_guard import DescribeLogGuard, describe_quota_key
 
@@ -91,7 +92,7 @@ async def test_quota_is_one_counter_for_both_routes():
 @pytest.mark.asyncio
 async def test_quota_counts_the_local_day(monkeypatch):
     monkeypatch.setattr(
-        guard_module,
+        quota_module,
         "utc_now",
         lambda: datetime(2026, 10, 26, 18, 30, tzinfo=UTC),
     )
@@ -107,7 +108,7 @@ async def test_quota_counts_the_local_day(monkeypatch):
 @pytest.mark.asyncio
 async def test_malformed_timezone_header_counts_the_utc_day(monkeypatch):
     monkeypatch.setattr(
-        guard_module,
+        quota_module,
         "utc_now",
         lambda: datetime(2026, 10, 26, 18, 30, tzinfo=UTC),
     )

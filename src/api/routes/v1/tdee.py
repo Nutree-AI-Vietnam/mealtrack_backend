@@ -10,6 +10,7 @@ from src.api.schemas.request import TdeeCalculationRequest
 from src.api.schemas.response import (
     TDEE_PREVIEW_CALCULATION_CONTRACT,
     MacroTargetsResponse,
+    PaceRangeResponse,
     TdeeCalculationResponse,
 )
 from src.app.queries.tdee import PreviewTdeeQuery
@@ -52,6 +53,8 @@ async def preview_tdee(
         custom_carbs_g=payload.custom_carbs_g,
         custom_fat_g=payload.custom_fat_g,
         requested_calories=payload.requested_calories,
+        weight_loss_kg_per_week=payload.weight_loss_kg_per_week,
+        weight_gain_kg_per_week=payload.weight_gain_kg_per_week,
     )
 
     result = await event_bus.send(query)
@@ -74,4 +77,7 @@ async def preview_tdee(
             "calculation_contract", TDEE_PREVIEW_CALCULATION_CONTRACT
         ),
         target_revision=result.get("target_revision", 0),
+        pace_range=PaceRangeResponse.from_result(result),
+        deficit_blocked_reason=result.get("deficit_blocked_reason"),
+        gain_pace_blocked_reason=result.get("gain_pace_blocked_reason"),
     )

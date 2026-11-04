@@ -1,7 +1,17 @@
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
+from typing import Annotated
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
+
+from src.domain.model.user.core_user import age_on
 
 
 class GoalEnum(StrEnum):
@@ -31,11 +41,18 @@ class UpdateFitnessGoalRequest(BaseModel):
 
 
 class UpdateMetricsRequest(BaseModel):
-    """Unified update for weight, job type, training, body fat, fitness goal, and target weight."""
+    """Unified update for weight, job type, training, body fat, goal, target weight and diet."""
 
     model_config = ConfigDict(extra="forbid")
 
     age: int | None = Field(None, ge=12, le=120, description="User age")
+    date_of_birth: date | None = Field(
+        None,
+        description=(
+            "Date of birth as YYYY-MM-DD. Sets age as of today and wins over an "
+            "age sent with it."
+        ),
+    )
     height_cm: float | None = Field(None, ge=100, le=272, description="Height in cm")
     weight_kg: float | None = Field(None, description="Weight in kg", gt=0)
     biological_sex: str | None = Field(
@@ -85,6 +102,53 @@ class UpdateMetricsRequest(BaseModel):
         False,
         description="Reset daily water goal to weight-based calculation (35 ml/kg)",
     )
+    weight_loss_kg_per_week: float | None = Field(
+        None,
+        ge=0.01,
+        le=1.0,
+        description="Lose-weight pace in kg per week. Omitted keeps the current pace.",
+    )
+    weight_gain_kg_per_week: float | None = Field(
+        None,
+        ge=0.01,
+        le=1.0,
+        description="Gain-weight pace in kg per week. Omitted keeps the current pace.",
+    )
+    dietary_preferences: list[Annotated[str, Field(max_length=40)]] | None = Field(
+        None,
+        max_length=10,
+        description="Diets such as vegetarian or keto. Omitted keeps the saved list.",
+    )
+    health_conditions: list[Annotated[str, Field(max_length=40)]] | None = Field(
+        None,
+        max_length=10,
+        description=(
+            "Conditions that change what a safe target is: pregnancy, "
+            "breastfeeding, kidney_disease, insulin_treated_diabetes, "
+            "eating_disorder_history. Omitted keeps the saved list."
+        ),
+    )
+    allergies: list[Annotated[str, Field(max_length=40)]] | None = Field(
+        None,
+        max_length=20,
+        description=(
+            "Allergies in any supported language, e.g. tôm, đậu phộng, milk. "
+            "A term the recipe data cannot check is rejected. Omitted keeps "
+            "the saved list; an empty list clears it."
+        ),
+    )
+
+    @field_validator("date_of_birth")
+    @classmethod
+    def validate_date_of_birth(cls, value: date | None) -> date | None:
+        if value is None:
+            return None
+        today = date.today()
+        if value > today:
+            raise ValueError("Date of birth cannot be in the future")
+        if not 12 <= age_on(value, today) <= 120:
+            raise ValueError("Date of birth must give an age between 12 and 120")
+        return value
 
     @model_validator(mode="after")
     def validate_pair_when_complete(self):

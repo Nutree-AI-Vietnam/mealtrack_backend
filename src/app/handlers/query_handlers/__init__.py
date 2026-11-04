@@ -4,6 +4,7 @@ Each handler is in its own file for better maintainability.
 """
 
 # Activity handlers
+from .get_activity_calories_query_handler import GetActivityCaloriesQueryHandler
 from .get_body_fat_visual_profile_query_handler import (
     GetBodyFatVisualProfileQueryHandler,
 )
@@ -80,6 +81,7 @@ __all__ = [
     "GetUserProfileQueryHandler",
     "GetUserTimezoneQueryHandler",
     "GetWeeklyAutoAdjustQueryHandler",
+    "GetActivityCaloriesQueryHandler",
     "GetBodyFatVisualProfileQueryHandler",
     "GetUserByFirebaseUidQueryHandler",
     "GetUserOnboardingStatusQueryHandler",

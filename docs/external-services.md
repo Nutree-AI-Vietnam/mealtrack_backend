@@ -218,7 +218,10 @@ optional caches.
   - **Correlation** after anonymous web pay: lead + RC `app_user_id` + redeem
     link digest (never raw URL).
   - **Silent login** (`POST /redemptions/session`, unauthenticated): hash →
-    time-limited Firebase custom token for the lead email owner. Repeated
+    Firebase custom token (the session it starts does not expire) for the
+    account this lead creates under its reserved UID. An email that already
+    has a Nutree user or Firebase record gets a 404 and must sign in to that
+    account instead. Repeated
     requests can mint a replacement while the paid redemption is unfinalized
     and nonterminal, so a lost response can be retried. IP-only SlowAPI key;
     issuance time and generation are recorded. Does not bind `preflight_uid`.
@@ -251,7 +254,7 @@ optional caches.
   takes a per-subscriber advisory lock before reading them.
   `has_entitled_subscription` counts a NULL expiry only for lifetime products.
 - While a lifetime row grants access, a renewing-product event changes only
-  its own product's row: no other row, no new row. A
+  its own product's row: no other row, no new row, no payment-failed push. A
   refunded lifetime row is history: the next plan gets its own row.
 - One store account can hold rows for two Nutree accounts. The lifetime paths
   (the upgrade, plan events beside lifetime, the restore) prefer the event
@@ -326,6 +329,34 @@ optional caches.
   open Order management, search the order id (without any `..N`), open the
   order and choose to cancel the subscription so it doesn't renew; don't
   refund. Afterwards RevenueCat sends a CANCELLATION for the plan.
+
+### Payment-failed push
+
+The only engagement notification the server sends; the app plans the rest
+(`plans/261026-notification-catalog/README.md`).
+
+- `ENGAGEMENT_PUSH_ENABLED` (default `false`) gates both halves: the webhook
+  queues nothing while it is off, so turning it on never sends a backlog at
+  night. With it on, every API process runs the dispatcher; claims use
+  `FOR UPDATE SKIP LOCKED`, so processes share the queue safely.
+- `BILLING_ISSUE` queues one `billing_issue` row in the `notifications`
+  outbox, due now if it is 09:00–20:00 in `users.timezone`, else at the next
+  09:00 there, and expiring 48 h later. A repeat `BILLING_ISSUE` while the
+  subscription is already `billing_issue` queues nothing (one push per
+  episode); the outbox also keeps at most one row per user, kind and local
+  date.
+- `RENEWAL`, `INITIAL_PURCHASE` and `PRODUCT_CHANGE` delete the user's pending
+  `billing_issue` row. Outbox writes run in a savepoint and never fail the
+  webhook.
+- The dispatcher polls every 30 s, 20 rows at a time. A claimed row is
+  committed as `processing` before the push goes out (a crash can lose a
+  push, never repeat it), then ends `sent` or `failed` (no device, or no
+  device accepted it); rows past `expires_at` become `expired`. Copy is in
+  `src/domain/model/notification/engagement_push_copy.py`; FCM data is
+  `{"type": "engagement", "kind": "billing_issue", "route": "/profile"}`
+  with collapse key `billing_issue`.
+- Not built yet: retrying a temporary FCM failure, and deleting old outbox
+  rows.
 
 ### Sentry ownership
 

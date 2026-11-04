@@ -16,6 +16,8 @@ from src.api.routes.v1.meals_read import router as read_router
 from src.api.routes.v1.meals_recent_favorites import (
     router as recent_favorites_router,
 )
+from src.api.routes.v1.meals_scan_feedback import router as scan_feedback_router
+from src.api.routes.v1.meals_streak_restore import router as streak_restore_router
 
 router = APIRouter(prefix="/v1/meals", tags=["Meals"])
 router.include_router(recent_favorites_router)
@@ -23,6 +25,8 @@ router.include_router(direct_upload_router)
 router.include_router(analyze_router)
 router.include_router(manual_text_router)
 router.include_router(read_router)
+router.include_router(streak_restore_router)
 router.include_router(edit_router)
+router.include_router(scan_feedback_router)
 
 __all__ = ["router", "MAX_FILE_SIZE", "get_meal_value_insights"]

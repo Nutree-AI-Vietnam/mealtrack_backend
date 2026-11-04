@@ -361,3 +361,137 @@ async def test_stale_watermark_counts_orphan_drink_without_double_counting_coffe
     assert result["total_fat"] == 18.0
     assert result["intake_watermark"] == "||"
     mock_uow.meals.find_by_date.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_an_iron_dose_raises_day_iron_but_not_calories_or_meals():
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from src.domain.model.supplement import SupplementIntake, SupplementNutrients
+
+    cache = MagicMock()
+    cache.get_json = AsyncMock(return_value=None)
+    cache.set_json = AsyncMock()
+    handler = GetDailyMacrosQueryHandler(cache_service=cache)
+    day = date(2026, 8, 11)
+    meal = _meal_with_macros(
+        meal_id="11111111-1111-1111-1111-111111111111", protein=45, carbs=0, fat=2
+    )
+    dose = SupplementIntake(
+        id="i1",
+        user_id="u1",
+        product_id="p1",
+        units=1,
+        taken_at=datetime(2026, 8, 11, 1, 0, tzinfo=UTC),
+        local_date=day,
+        logged_on_day=True,
+        nutrients=SupplementNutrients({"iron": 18.0}),
+    )
+    touched = datetime(2026, 8, 11, 1, 0, tzinfo=UTC)
+
+    with patch(
+        "src.app.handlers.query_handlers.get_daily_macros_query_handler.AsyncUnitOfWork"
+    ) as mock_cls:
+        mock_uow = AsyncMock()
+        mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
+        mock_uow.__aexit__ = AsyncMock(return_value=False)
+        fake_user = MagicMock()
+        fake_user.timezone = "UTC"
+        mock_uow.users.find_by_id = AsyncMock(return_value=fake_user)
+        mock_uow.users.get_profile = AsyncMock(return_value=None)
+        mock_uow.meals.find_by_date = AsyncMock(return_value=[meal])
+        mock_uow.meals.sum_hydration_ml_for_date = AsyncMock(return_value=0)
+        mock_uow.hydration_entries.find_by_date = AsyncMock(return_value=[])
+        mock_uow.hydration_entries.sum_ml_for_date = AsyncMock(return_value=0)
+        mock_uow.movement_entries.sum_included_kcal_for_range = AsyncMock(
+            return_value=0.0
+        )
+        mock_uow.weekly_budgets.find_by_user_and_week = AsyncMock(return_value=None)
+        mock_uow.supplements = SimpleNamespace(
+            schema_ready=AsyncMock(return_value=True),
+            intakes_between=AsyncMock(return_value=[dose]),
+            max_updated_at_for_local_day=AsyncMock(return_value=touched),
+        )
+        mock_cls.return_value = mock_uow
+
+        with patch(
+            "src.app.handlers.query_handlers.get_user_tdee_query_handler.GetUserTdeeQueryHandler"
+        ) as mock_tdee_cls:
+            mock_tdee = MagicMock()
+            mock_tdee.handle = AsyncMock(
+                return_value={
+                    "target_calories": 1728,
+                    "macros": {"protein": 147, "carbs": 140, "fat": 64},
+                    "bmr": 1400,
+                    "profile_target_revision": 3,
+                }
+            )
+            mock_tdee_cls.return_value = mock_tdee
+            result = await handler.handle(
+                GetDailyMacrosQuery(user_id="u1", target_date=day)
+            )
+
+    assert result["iron_mg"] == 18.0
+    assert result["supplement_micros"] == {"iron": 18.0}
+    assert result["food_calories"] == pytest.approx(45 * 4 + 2 * 9, rel=0.01)
+    assert result["meal_count"] == 1
+    assert result["intake_watermark"].endswith("|2026-08-11T01:00:00+00:00")
+
+
+@pytest.mark.asyncio
+async def test_before_the_supplement_migration_home_keeps_its_fingerprint():
+    from types import SimpleNamespace
+
+    cache = MagicMock()
+    cache.get_json = AsyncMock(return_value=None)
+    cache.set_json = AsyncMock()
+    handler = GetDailyMacrosQueryHandler(cache_service=cache)
+    day = date(2026, 8, 11)
+    supplements = SimpleNamespace(
+        schema_ready=AsyncMock(return_value=False),
+        intakes_between=AsyncMock(side_effect=AssertionError("no table yet")),
+        max_updated_at_for_local_day=AsyncMock(side_effect=AssertionError("no table")),
+    )
+
+    with patch(
+        "src.app.handlers.query_handlers.get_daily_macros_query_handler.AsyncUnitOfWork"
+    ) as mock_cls:
+        mock_uow = AsyncMock()
+        mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
+        mock_uow.__aexit__ = AsyncMock(return_value=False)
+        fake_user = MagicMock()
+        fake_user.timezone = "UTC"
+        mock_uow.users.find_by_id = AsyncMock(return_value=fake_user)
+        mock_uow.users.get_profile = AsyncMock(return_value=None)
+        mock_uow.meals.find_by_date = AsyncMock(return_value=[])
+        mock_uow.meals.sum_hydration_ml_for_date = AsyncMock(return_value=0)
+        mock_uow.hydration_entries.find_by_date = AsyncMock(return_value=[])
+        mock_uow.hydration_entries.sum_ml_for_date = AsyncMock(return_value=0)
+        mock_uow.movement_entries.sum_included_kcal_for_range = AsyncMock(
+            return_value=0.0
+        )
+        mock_uow.weekly_budgets.find_by_user_and_week = AsyncMock(return_value=None)
+        mock_uow.supplements = supplements
+        mock_cls.return_value = mock_uow
+
+        with patch(
+            "src.app.handlers.query_handlers.get_user_tdee_query_handler.GetUserTdeeQueryHandler"
+        ) as mock_tdee_cls:
+            mock_tdee = MagicMock()
+            mock_tdee.handle = AsyncMock(
+                return_value={
+                    "target_calories": 1728,
+                    "macros": {"protein": 147, "carbs": 140, "fat": 64},
+                    "bmr": 1400,
+                    "profile_target_revision": 3,
+                }
+            )
+            mock_tdee_cls.return_value = mock_tdee
+            result = await handler.handle(
+                GetDailyMacrosQuery(user_id="u1", target_date=day)
+            )
+
+    assert result["supplement_micros"] == {}
+    assert result["iron_mg"] is None
+    assert result["intake_watermark"].count("|") == 2

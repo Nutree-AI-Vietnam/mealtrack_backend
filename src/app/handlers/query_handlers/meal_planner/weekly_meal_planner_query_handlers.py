@@ -5,13 +5,18 @@ from typing import Any
 from src.app.events.base import EventHandler, handles
 from src.app.queries.meal_planner import (
     GetCurrentWeeklyPlanQuery,
+    GetMealPlanSlotSuggestionsQuery,
     GetRecipeDetailQuery,
+    GetRecipeDetailsQuery,
     GetRecipeSummariesQuery,
     GetWeeklyGroceriesQuery,
     ListRecipesQuery,
 )
 from src.app.services.weekly_grocery_service import WeeklyGroceryService
 from src.app.services.weekly_recipe_service import WeeklyRecipeService
+from src.app.services.weekly_slot_suggestion_service import (
+    WeeklySlotSuggestionService,
+)
 
 
 @handles(GetCurrentWeeklyPlanQuery)
@@ -42,6 +47,7 @@ class ListRecipesQueryHandler(EventHandler):
             dislikes=query.dislikes,
             limit=query.limit,
             offset=query.offset,
+            min_protein=query.min_protein,
         )
 
 
@@ -65,6 +71,34 @@ class GetRecipeDetailQueryHandler(EventHandler):
             query.recipe_id,
             include_cached_micronutrients=query.include_cached_micronutrients,
         )
+
+
+@handles(GetMealPlanSlotSuggestionsQuery)
+class GetMealPlanSlotSuggestionsQueryHandler(EventHandler):
+    def __init__(self, uow_factory: Any):
+        self.service = WeeklySlotSuggestionService(uow_factory)
+
+    async def handle(self, query):
+        return await self.service.suggestions(
+            user_id=query.user_id,
+            plan_id=query.plan_id,
+            slot_id=query.slot_id,
+            diet=query.diet,
+            max_cook_time=query.max_cook_time,
+            min_protein=query.min_protein,
+            limit=query.limit,
+        )
+
+
+@handles(GetRecipeDetailsQuery)
+class GetRecipeDetailsQueryHandler(EventHandler):
+    def __init__(self, uow_factory: Any, *, micronutrient_enrichment=None):
+        self.service = WeeklyRecipeService(
+            uow_factory, micronutrient_enrichment=micronutrient_enrichment
+        )
+
+    async def handle(self, query):
+        return await self.service.details(query.recipe_ids)
 
 
 @handles(GetRecipeSummariesQuery)

@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "status": "applied_to_committed_fixtures",
+  "audience": "Committed QA labels in tests/fixtures/accuracy_baseline. Case ids keep qa_case_id and use hyphenated case_id.",
+  "working_copy": "/workspace/ai-accuracy-eval/qa_label_schema.json",
+  "case_id_rule": "Keep the synthetic case id. When promoting a surviving pool row into a reviewed manifest, rewrite eval_scan_001 to eval-scan-001 and eval_prompt_001 to eval-prompt-001. Never substitute meal_id or user_id.",
+  "forbidden_fields": [
+    "address",
+    "description",
+    "dish_name_guess",
+    "email",
+    "image_id",
+    "image_url",
+    "meal_id",
+    "phone",
+    "raw_ai_response",
+    "url",
+    "user_id"
+  ],
+  "do_not_copy_from_pool_csv": [
+    "calories is a protein*4 + carbs*4 + fat*9 estimate from the latest nutrition row, not a label and not the fiber-aware backend formula",
+    "confidence is nutrition.confidence_score, not a reviewed truth",
+    "created_at, cuisine_type, origin_country, edit_count, and is_manually_edited stay on the restricted pool and are not fixture fields"
+  ],
+  "manifest_fields_after_dual_review": {
+    "privacy_reviewed": true,
+    "review_status": "reviewed",
+    "reviewed_by": "required non-empty reviewer id that is not a production user id",
+    "schema_version": 1,
+    "source_provenance": "required short provenance with no meal id, user id, or URL"
+  },
+  "surfaces": {
+    "meal_scan": {
+      "pool_file": "/workspace/ai-accuracy-eval/qa_scan_candidates.csv",
+      "qa_fields": {
+        "case_id": "synthetic id after hyphen rewrite",
+        "coverage_notes": "optional non-identifying note about what is visible",
+        "expected_calories_kcal": "[low, high], non-negative, high >= low; do not copy pool calories",
+        "expected_foods": [
+          {
+            "aliases": ["visible food name", "optional synonym"],
+            "quantity_g": "[low, high] edible grams, or one positive number"
+          }
+        ],
+        "expected_is_food": "true when the stripped photo shows food; false for negatives",
+        "expected_macros": {
+          "carbs_g": "[low, high] or a non-negative number",
+          "fat_g": "[low, high] or a non-negative number",
+          "fiber_g": "[low, high] or a non-negative number",
+          "protein_g": "[low, high] or a non-negative number",
+          "sugar_g": "[low, high] or a non-negative number"
+        },
+        "expected_micros": {
+          "added_sugar": {"status": "known|unknown|masked", "unit": "g"},
+          "calcium": {"status": "known|unknown|masked", "unit": "mg"},
+          "iron": {"status": "known|unknown|masked", "unit": "mg"},
+          "magnesium": {"status": "known|unknown|masked", "unit": "mg"},
+          "potassium": {"status": "known|unknown|masked", "unit": "mg"},
+          "saturated_fat": {"status": "known|unknown|masked", "unit": "g"},
+          "sodium": {"status": "known|unknown|masked", "unit": "mg"},
+          "vitamin_a": {"status": "known|unknown|masked", "unit": "mcg"},
+          "vitamin_c": {"status": "known|unknown|masked", "unit": "mg"},
+          "vitamin_e": {"status": "known|unknown|masked", "unit": "mg"}
+        },
+        "image_path": "relative path to the stripped, re-encoded JPEG inside the manifest directory",
+        "image_sha256": "sha256 of that stripped file",
+        "language": "en or vi, assigned from the stripped photo, not from users.language_code",
+        "split": "development or held_out, frozen before any prompt tuning"
+      },
+      "rules": [
+        "Food photos need at least one expected food and expected_calories_kcal",
+        "Non-food photos need expected_is_food false and no expected_foods",
+        "Label only what is visible or independently verified. Do not fill a typical recipe as visual truth",
+        "known micros include value; unknown and masked micros must not include value",
+        "A reviewed 100-case corpus is not complete until every food case has all five macros and all ten micro statuses"
+      ]
+    },
+    "parse_text": {
+      "pool_file": "/workspace/ai-accuracy-eval/qa_prompt_candidates.csv",
+      "qa_fields": {
+        "case_id": "synthetic id after hyphen rewrite",
+        "expected_calories_kcal": "[low, high]; do not copy pool calories",
+        "expected_items": [
+          {
+            "aliases": ["scrubbed food name"],
+            "quantity_g": "[low, high] or one positive number"
+          }
+        ],
+        "expected_macros": {
+          "carbs_g": "[low, high] or a non-negative number",
+          "fat_g": "[low, high] or a non-negative number",
+          "fiber_g": "[low, high] or a non-negative number",
+          "protein_g": "[low, high] or a non-negative number",
+          "sugar_g": "[low, high] or a non-negative number"
+        },
+        "expected_micros": {
+          "added_sugar": {"status": "known|unknown|masked", "unit": "g"},
+          "calcium": {"status": "known|unknown|masked", "unit": "mg"},
+          "iron": {"status": "known|unknown|masked", "unit": "mg"},
+          "magnesium": {"status": "known|unknown|masked", "unit": "mg"},
+          "potassium": {"status": "known|unknown|masked", "unit": "mg"},
+          "saturated_fat": {"status": "known|unknown|masked", "unit": "g"},
+          "sodium": {"status": "known|unknown|masked", "unit": "mg"},
+          "vitamin_a": {"status": "known|unknown|masked", "unit": "mcg"},
+          "vitamin_c": {"status": "known|unknown|masked", "unit": "mg"},
+          "vitamin_e": {"status": "known|unknown|masked", "unit": "mg"}
+        },
+        "language": "en or vi, assigned from the scrubbed text",
+        "split": "development or held_out, frozen before any prompt tuning",
+        "text": "scrubbed meal text with names, phones, and places removed"
+      },
+      "rules": [
+        "At least one expected item, and no more than 20",
+        "Each item needs aliases and quantity_g",
+        "known micros include value; unknown and masked micros must not include value",
+        "Do not paste production dish names until they have been scrubbed"
+      ]
+    }
+  }
+}

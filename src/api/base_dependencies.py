@@ -1,6 +1,7 @@
 import logging
 import os
 from collections.abc import Callable
+from functools import lru_cache
 from importlib import import_module
 from typing import TYPE_CHECKING, Optional
 from uuid import UUID
@@ -13,6 +14,7 @@ from src.app.services.catalog_food_reference_review_service import (
 )
 from src.app.services.catalog_meal_seed_import_service import CatalogMealSeedImporter
 from src.app.services.catalog_meal_snapshot_service import CatalogMealSnapshotService
+from src.domain.model.streak import StreakRestorePolicy
 from src.domain.parsers.vision_response_parser import VisionResponseParser
 from src.domain.ports.food_cache_service_port import FoodCacheServicePort
 from src.domain.ports.food_mapping_service_port import FoodMappingServicePort
@@ -46,7 +48,9 @@ from src.infra.repositories.food_reference_repository_async import (
 )
 
 if TYPE_CHECKING:
+    from src.app.services.daily_quota import DailyQuota
     from src.app.services.describe_log_guard import DescribeLogGuard
+    from src.app.services.recipe_import import RecipeImportGuard
     from src.domain.ports.subscription_service_port import SubscriptionServicePort
 
 # Note: Old handler imports removed - using event-driven architecture now
@@ -499,6 +503,9 @@ def get_meal_analyze_graph_settings():
         "fatsecret_validation_enabled": (
             current_settings.AI_MEAL_ANALYZE_FATSECRET_VALIDATION_ENABLED
         ),
+        "reference_grounding_enabled": (
+            current_settings.AI_MEAL_SCAN_REFERENCE_GROUNDING_ENABLED
+        ),
         "graph_enabled": current_settings.AI_MEAL_ANALYZE_GRAPH_ENABLED,
         "graph_version": current_settings.AI_MEAL_ANALYZE_GRAPH_VERSION,
     }
@@ -517,6 +524,25 @@ def get_parse_text_settings() -> dict[str, bool]:
             getattr(current_settings, "PARSE_TEXT_PURE_AI_ENABLED", False)
         ),
     }
+
+
+@lru_cache(maxsize=1)
+def get_streak_restore_policy() -> StreakRestorePolicy:
+    """Streak restore switches and the sandbox allow-list, read once."""
+    from src.infra.config.settings import get_settings
+
+    current_settings = get_settings()
+    return StreakRestorePolicy(
+        production=current_settings.ENVIRONMENT == "production",
+        sandbox_user_ids=frozenset(
+            user_id.strip()
+            for user_id in current_settings.STREAK_RESTORE_SANDBOX_USER_IDS.split(",")
+            if user_id.strip()
+        ),
+        spend_enabled=current_settings.STREAK_RESTORE_SPEND_ENABLED,
+        claim_enabled=current_settings.STREAK_RESTORE_CLAIM_ENABLED,
+        same_day_logs_from=current_settings.STREAK_SAME_DAY_LOGS_FROM,
+    )
 
 
 # Food Reference Repository (replaces barcode_product_repository)
@@ -790,6 +816,26 @@ def get_describe_log_guard() -> "DescribeLogGuard":
     )
 
 
+def get_recipe_import_guard() -> "RecipeImportGuard":
+    """Recipe import switch and per-user daily quota."""
+    from src.bootstrap.recipe_import import build_recipe_import_guard
+
+    return build_recipe_import_guard(_increment_counter_with_expiry)
+
+
+def get_supplement_label_scan_quota() -> "DailyQuota":
+    """Supplement label photos per user per local day (AI, so counted apart)."""
+    from src.app.services.daily_quota import DailyQuota
+
+    return DailyQuota(
+        scope="supplement_label_scan",
+        daily_limit=settings.SUPPLEMENT_LABEL_SCANS_PER_DAY,
+        increment_counter=_increment_counter_with_expiry,
+        error_code="SUPPLEMENT_LABEL_SCAN_DAILY_LIMIT",
+        message="Daily label scan limit reached",
+    )
+
+
 async def _increment_counter_with_expiry(key: str, ttl_seconds: int) -> int | None:
     """Count in Redis; None when Redis is not configured or unreachable."""
     if _redis_client is None:
@@ -831,6 +877,12 @@ def get_web_funnel_redemption_service():
     )
 
     return factory()
+
+
+def get_scan_feedback_service():
+    from src.app.services.scan_feedback_service import ScanFeedbackService
+
+    return ScanFeedbackService(AsyncUnitOfWork)
 
 
 def get_planner_translation_service():

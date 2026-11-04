@@ -116,6 +116,7 @@ async def test_target_weight_change_resets_journey_seed(monkeypatch):
         (),
         {
             "age": 30,
+            "date_of_birth": None,
             "height_cm": 180.0,
             "gender": "male",
             "job_type": "desk",
@@ -129,6 +130,12 @@ async def test_target_weight_change_resets_journey_seed(monkeypatch):
             "journey_progress_seed_percent": 50.0,
             "profile_target_revision": 1,
             "weight_kg": 78.0,
+            "weight_loss_kg_per_week": None,
+            "weight_gain_kg_per_week": None,
+            "weight_loss_pace_reset_on": None,
+            "dietary_preferences": [],
+            "allergies": [],
+            "health_conditions": [],
             "is_current": True,
         },
     )()

@@ -41,6 +41,7 @@ from src.domain.services.meal_type_determination_service import (
 )
 from src.domain.utils.timezone_utils import (
     get_zone_info,
+    is_same_day_log,
     is_valid_timezone,
     noon_utc_for_date,
     user_today,
@@ -382,6 +383,10 @@ class UploadMealImageImmediatelyHandler(
                 ready_at=utc_now(),
                 raw_gpt_json=self.gpt_parser.extract_raw_json(analysis_result),
                 nutrition=nutrition,
+                # Judged at the request's arrival: analysis can end past midnight.
+                logged_on_day=is_same_day_log(
+                    command.target_date, user_timezone, command.received_at
+                ),
             )
             meal = persist_meal_response_localization(meal, localization)
 

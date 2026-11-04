@@ -25,13 +25,39 @@ class NotificationPreferencesUpdateRequest(BaseModel):
     """Request to update notification preferences."""
 
     meal_reminders_enabled: Optional[bool] = Field(
-        None, description="Enable/disable meal reminders"
+        None,
+        description=(
+            "Enable/disable all meal reminders (older apps). Ignored when any "
+            "per-meal switch is sent"
+        ),
+    )
+    breakfast_reminder_enabled: bool | None = Field(
+        None, description="Enable/disable the breakfast reminder"
+    )
+    lunch_reminder_enabled: bool | None = Field(
+        None, description="Enable/disable the lunch reminder"
+    )
+    dinner_reminder_enabled: bool | None = Field(
+        None, description="Enable/disable the dinner reminder"
     )
     daily_summary_enabled: Optional[bool] = Field(
         None, description="Enable/disable daily summary notifications"
     )
     hydration_reminders_enabled: Optional[bool] = Field(
         None, description="Enable/disable hydration reminder notifications"
+    )
+    streak_reminders_enabled: bool | None = Field(
+        None, description="Enable/disable streak alerts (streak saver, win the day)"
+    )
+    reengagement_enabled: bool | None = Field(
+        None, description="Enable/disable comeback nudges after the user stops logging"
+    )
+    progress_updates_enabled: bool | None = Field(
+        None, description="Enable/disable progress notes and recaps"
+    )
+    offers_enabled: bool | None = Field(
+        None,
+        description="Opt in to promotional offers and new-feature news (off by default)",
     )
 
     # Meal timing (minutes from midnight: 0-1439)
@@ -54,6 +80,14 @@ class NotificationPreferencesUpdateRequest(BaseModel):
         ge=0,
         le=1439,
         description="Daily summary time (minutes from midnight)",
+    )
+
+    # Water reminder timing
+    hydration_reminder_time_minutes: int | None = Field(
+        None,
+        ge=0,
+        le=1439,
+        description="Water reminder time (minutes from midnight)",
     )
 
     # Preferred notification language

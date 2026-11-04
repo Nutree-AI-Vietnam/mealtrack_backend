@@ -59,12 +59,12 @@ def test_vision_service_uses_ai_model_manager():
 
 def test_compress_image_resizes_large_image():
     service = _make_service()
-    large_bytes = _make_jpeg(2000, 1500)
+    large_bytes = _make_jpeg(4000, 3000)
 
     result = service._compress_image(large_bytes)
 
     img = Image.open(BytesIO(result))
-    assert max(img.size) <= 768
+    assert max(img.size) == 2048
 
 
 def test_compress_image_skips_small_image():
@@ -104,7 +104,7 @@ def test_extract_json_failure_does_not_log_raw_ai_response(caplog):
 async def test_analyze_with_strategy_compresses_before_sending():
     service = _make_service()
 
-    large_bytes = _make_jpeg(2000, 1500)
+    large_bytes = _make_jpeg(4000, 3000)
 
     from src.domain.strategies.meal_analysis_strategy import AnalysisStrategyFactory
 
@@ -116,9 +116,9 @@ async def test_analyze_with_strategy_compresses_before_sending():
     call_kwargs = service._ai_manager.generate_with_vision.call_args
     image_data = call_kwargs.kwargs["image_data"]
 
-    # The image should be compressed (smaller than 2000x1500)
+    # The image should be compressed (smaller than 4000x3000)
     img = Image.open(BytesIO(image_data))
-    assert max(img.size) <= 768
+    assert max(img.size) == 2048
 
 
 @pytest.mark.asyncio
@@ -215,3 +215,98 @@ def test_recipe_token_limit_is_1200():
     )
 
     assert PARALLEL_SINGLE_MEAL_TOKENS == 1200
+
+
+@pytest.mark.asyncio
+async def test_scan_provenance_is_stored_without_changing_model_output():
+    import hashlib
+    import json
+
+    from src.domain.strategies.meal_analysis_strategy import AnalysisStrategyFactory
+
+    service = _make_service()
+    strategy = AnalysisStrategyFactory.create_basic_strategy()
+    result = await service.analyze_with_strategy(_make_jpeg(400, 300), strategy)
+    kwargs = service._ai_manager.generate_with_vision.call_args.kwargs
+    raw = json.loads(result["raw_response"])
+    assert (
+        raw["_scan_provenance"]["image_sha256"]
+        == hashlib.sha256(kwargs["image_data"]).hexdigest()
+    )
+    assert (
+        raw["_scan_provenance"]["prompt_sha256"]
+        == hashlib.sha256(strategy.get_analysis_prompt().encode()).hexdigest()
+    )
+    assert "_scan_provenance" not in result["structured_data"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("full_micros", [False, True])
+async def test_full_micros_flag_picks_the_contract_and_prompt(monkeypatch, full_micros):
+    from src.domain.model.ai.full_micros_contracts import (
+        FoodLabelNutritionResponseFull,
+        VisionNutritionResponseFull,
+    )
+    from src.domain.model.ai.nutrition_contracts import (
+        FoodLabelNutritionResponse,
+        VisionNutritionResponse,
+    )
+    from src.domain.strategies.meal_analysis_strategy import (
+        AnalysisStrategyFactory,
+        FoodLabelImageAnalysisStrategy,
+    )
+    from src.infra.config.settings import get_settings
+
+    monkeypatch.setattr(get_settings(), "AI_SCAN_FULL_MICROS_ENABLED", full_micros)
+    service = _make_service()
+    meal = AnalysisStrategyFactory.create_basic_strategy()
+    await service.analyze_with_strategy(_make_jpeg(400, 300), meal)
+    kwargs = service._ai_manager.generate_with_vision.call_args.kwargs
+    assert kwargs["schema"] is (
+        VisionNutritionResponseFull if full_micros else VisionNutritionResponse
+    )
+    assert ("all 21 keys" in kwargs["system_message"]) is full_micros
+    if not full_micros:
+        assert kwargs["system_message"] == meal.get_analysis_prompt()
+
+    label_service = _make_service(
+        response={
+            "is_food_label": True,
+            "macros_per_serving": {"protein_g": 1, "carbs_g": 2, "fat_g": 0},
+        }
+    )
+    await label_service.analyze_with_strategy(
+        _make_jpeg(400, 300), FoodLabelImageAnalysisStrategy()
+    )
+    label_kwargs = label_service._ai_manager.generate_with_vision.call_args.kwargs
+    assert label_kwargs["schema"] is (
+        FoodLabelNutritionResponseFull if full_micros else FoodLabelNutritionResponse
+    )
+    assert ("selenium" in label_kwargs["system_message"]) is full_micros
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("full_micros", [False, True])
+async def test_supplement_labels_use_their_own_contract_whatever_the_flag(
+    monkeypatch, full_micros
+):
+    from src.domain.model.ai.model_purpose import ModelPurpose
+    from src.domain.model.ai.supplement_label_contract import SupplementLabelResponse
+    from src.domain.strategies.supplement_label_strategy import (
+        SupplementLabelAnalysisStrategy,
+    )
+    from src.infra.config.settings import get_settings
+
+    monkeypatch.setattr(get_settings(), "AI_SCAN_FULL_MICROS_ENABLED", full_micros)
+    strategy = SupplementLabelAnalysisStrategy()
+    service = _make_service(
+        response={"is_supplement_label": True, "product_name": "Zinc 50mg"}
+    )
+
+    result = await service.analyze_with_strategy(_make_jpeg(400, 300), strategy)
+
+    kwargs = service._ai_manager.generate_with_vision.call_args.kwargs
+    assert kwargs["schema"] is SupplementLabelResponse
+    assert kwargs["system_message"] == strategy.get_analysis_prompt()
+    assert kwargs["purpose"] == ModelPurpose.SUPPLEMENT_LABEL_SCAN
+    assert result["structured_data"]["product_name"] == "Zinc 50mg"

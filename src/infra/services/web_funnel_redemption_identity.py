@@ -1,36 +1,51 @@
-"""Mint Firebase custom tokens for web-funnel silent login. Do not reuse resolve()."""
+"""Mint Firebase custom tokens for web-funnel silent login. Do not reuse resolve().
+
+A redemption link proves the purchase, not ownership of the checkout email, so
+a silent login may only open the account this redemption created itself.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 
 from firebase_admin import auth  # type: ignore[import-untyped]
 
 SILENT_LOGIN_CLAIM = "wf_silent_login"
+SILENT_LOGIN_UID_PREFIX = "wfr_"
 
 
 class RedemptionIdentityUnavailable(Exception):
     """Map to generic 404. Do not distinguish miss vs conflict."""
 
 
+def silent_login_uid(lead_id: str) -> str:
+    """Firebase UID reserved for the account a lead's silent login may create.
+
+    Only the Admin SDK can create a record with a chosen UID, so a record under
+    this UID was created by this lead's redemption, never by a pre-existing owner.
+    """
+    digest = hashlib.sha256(f"redemption-session:{lead_id}".encode()).hexdigest()
+    return f"{SILENT_LOGIN_UID_PREFIX}{digest[:40]}"
+
+
 class WebFunnelRedemptionIdentityService:
-    async def mint_for_email(self, email: str, *, mealtrack_uid: str | None) -> str:
-        record = await self._user_for(email.strip().lower(), mealtrack_uid)
+    async def mint_for_new_buyer(self, email: str, *, uid: str) -> str:
+        """Mint for the redemption's own record; never adopt an existing account."""
+        email = email.strip().lower()
+        record = await self._own_record(uid, email)
         if (
-            record.disabled
-            or (record.uid or "").startswith("wf_")
-            or (record.email or "").lower() != email.strip().lower()
+            record.uid != uid
+            or record.disabled
+            or (record.email or "").lower() != email
+            # Created records have no provider. Any linked one (Google, Apple,
+            # email link as "password") means the mailbox owner signed in here.
+            or record.provider_data
         ):
             raise RedemptionIdentityUnavailable()
-        await asyncio.to_thread(
-            auth.update_user,
-            record.uid,
-            email=email.strip().lower(),
-            email_verified=True,
-        )
         token = await asyncio.to_thread(
             auth.create_custom_token,
-            record.uid,
+            uid,
             {SILENT_LOGIN_CLAIM: 1},
         )
         return token.decode("utf-8") if isinstance(token, bytes) else token
@@ -44,36 +59,18 @@ class WebFunnelRedemptionIdentityService:
             return None
         return record.email.lower()
 
-    async def _user_for(self, email: str, mealtrack_uid: str | None):
-        if mealtrack_uid:
-            if mealtrack_uid.startswith("wf_"):
-                raise RedemptionIdentityUnavailable()
-            try:
-                return await asyncio.to_thread(auth.get_user, mealtrack_uid)
-            except auth.UserNotFoundError:
-                try:
-                    return await asyncio.to_thread(
-                        auth.create_user,
-                        uid=mealtrack_uid,
-                        email=email,
-                        email_verified=True,
-                    )
-                except auth.UidAlreadyExistsError:
-                    return await asyncio.to_thread(auth.get_user, mealtrack_uid)
-                except auth.EmailAlreadyExistsError:
-                    record = await self._get_by_email(email)
-                    if record.uid != mealtrack_uid:
-                        raise RedemptionIdentityUnavailable() from None
-                    return record
+    async def _own_record(self, uid: str, email: str):
         try:
-            return await self._get_by_email(email)
+            return await asyncio.to_thread(auth.get_user, uid)
         except auth.UserNotFoundError:
-            try:
-                return await asyncio.to_thread(
-                    auth.create_user, email=email, email_verified=True
-                )
-            except auth.EmailAlreadyExistsError:
-                return await self._get_by_email(email)
-
-    async def _get_by_email(self, email: str):
-        return await asyncio.to_thread(auth.get_user_by_email, email)
+            pass
+        try:
+            # email_verified only on a record created here; existing records are
+            # never updated, so an unverified email cannot be promoted.
+            return await asyncio.to_thread(
+                auth.create_user, uid=uid, email=email, email_verified=True
+            )
+        except auth.EmailAlreadyExistsError:
+            raise RedemptionIdentityUnavailable() from None
+        except auth.UidAlreadyExistsError:
+            return await asyncio.to_thread(auth.get_user, uid)

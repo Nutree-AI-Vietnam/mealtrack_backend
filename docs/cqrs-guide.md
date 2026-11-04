@@ -172,8 +172,8 @@ for other delete-only cache paths.
 External secondary effects follow the same boundary. Preference, timezone,
 language, and account deletion changes commit SQL first and publish their
 integration event. Notification and email delivery are intentionally out of
-scope. AI discovery, recipe generation, and three-day recommendation creation
-remain synchronous until the HTTP contract exposes an accepted/job-status flow.
+scope. AI discovery and recipe generation remain synchronous until the HTTP
+contract exposes an accepted/job-status flow.
 
 ---
 

@@ -13,6 +13,7 @@ from src.app.services.ai_jobs import (
     ChatJobExecutor,
     MealScanJobExecutor,
     ParseTextJobExecutor,
+    RecipeImportJobExecutor,
 )
 from src.domain.model.ai_jobs import AiJobType
 from src.infra.database.uow_async import AsyncUnitOfWork
@@ -180,6 +181,7 @@ async def test_start_runs_the_worker_and_the_notifier_once(env, caplog):
             deadline_seconds=90,
             poll_seconds=1.0,
             notify_grace_seconds=8,
+            deadline_overrides={AiJobType.RECIPE_IMPORT: 120.0},
             ready=env.probe.ready,
         )
         env.FcmPushSender.assert_called_once_with(executor=env.push_executor)
@@ -369,11 +371,13 @@ def test_build_executors_covers_every_job_type():
     send = AsyncMock()
     orchestrator_factory = MagicMock()
     parse_text_result = MagicMock()
+    recipe_import_result = MagicMock()
 
     executors = ai_jobs_bootstrap.build_ai_job_executors(
         send=send,
         orchestrator_factory=orchestrator_factory,
         parse_text_result=parse_text_result,
+        recipe_import_result=recipe_import_result,
     )
 
     assert set(executors) == set(AiJobType)
@@ -388,3 +392,7 @@ def test_build_executors_covers_every_job_type():
     chat = executors[AiJobType.CHAT]
     assert isinstance(chat, ChatJobExecutor)
     assert chat._orchestrator_factory is orchestrator_factory
+    recipe_import = executors[AiJobType.RECIPE_IMPORT]
+    assert isinstance(recipe_import, RecipeImportJobExecutor)
+    assert recipe_import._send is send
+    assert recipe_import._to_result is recipe_import_result

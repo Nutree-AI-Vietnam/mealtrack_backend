@@ -4,9 +4,9 @@ import uuid
 from datetime import datetime
 
 from src.api.mappers.meal_mapper import MealMapper
-from src.domain.services.meal_nrf_fields import meal_nrf_fields
 from src.domain.model import FoodItem, Macros, Meal, MealImage, MealStatus, Nutrition
 from src.domain.model.nutrition.micros import Micros
+from src.domain.services.meal_nrf_fields import meal_nrf_fields
 from src.domain.services.nrf_score import nrf_progress_fields, nrf_quality
 
 
@@ -142,8 +142,8 @@ def test_daily_nutrition_highlights_preserve_zero():
     assert result.added_sugar_g == 0.0
 
 
-def test_daily_nutrition_includes_dri_targets_from_profile():
-    result = MealMapper.to_daily_nutrition_response(
+def _daily(**profile):
+    return MealMapper.to_daily_nutrition_response(
         {
             "date": "2025-01-15",
             "target_calories": 1947.0,
@@ -152,13 +152,23 @@ def test_daily_nutrition_includes_dri_targets_from_profile():
             "total_protein": 30.0,
             "total_carbs": 40.0,
             "total_fat": 10.0,
-            "gender": "male",
-            "age": 34,
+            **profile,
         }
     )
+
+
+def test_daily_nutrition_includes_personal_goals_from_profile():
+    result = _daily(gender="male", age=34)
     assert result.micro_targets is not None
-    assert result.micro_targets.iron_mg == 8.0
-    assert result.micro_targets.potassium_mg == 3400.0
-    assert result.micro_targets.sodium_mg == 2300.0
-    assert result.micro_targets.fiber_g == 27.3
-    assert result.micro_targets.added_sugar_g == 48.7
+    assert result.micro_targets.iron_mg == 7.9
+    assert result.micro_targets.potassium_mg == 2500.0
+    assert result.micro_targets.sodium_mg == 2000.0
+    assert result.micro_targets.fiber_g == 38.0
+    assert result.micro_targets.added_sugar_g == 25.0
+
+
+def test_daily_nutrition_goals_follow_a_plant_based_diet():
+    result = _daily(gender="female", age=30, dietary_preferences=["vegetarian"])
+    assert result.micro_targets is not None
+    assert result.micro_targets.iron_mg == 26.1
+    assert result.micro_targets.fiber_g == 25.0

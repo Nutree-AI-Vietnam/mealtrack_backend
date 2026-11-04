@@ -14,6 +14,7 @@ from src.api.dependencies.auth import (
     verify_firebase_uid_ownership,
 )
 from src.api.dependencies.event_bus import get_configured_event_bus
+from src.api.routes.v1.users_avatar import router as avatar_router
 from src.api.schemas.request.user_requests import (
     UserSyncRequest,
     UserUpdateLastAccessedRequest,
@@ -29,6 +30,7 @@ from src.api.schemas.response.user_responses import (
 from src.app.commands.user import (
     CompleteOnboardingCommand,
     DeleteUserCommand,
+    UpdateActivityCaloriesCommand,
     UpdateLanguageCommand,
     UpdateTimezoneCommand,
     UpdateWeeklyAutoAdjustCommand,
@@ -36,6 +38,9 @@ from src.app.commands.user import (
 from src.app.commands.user.sync_user_command import (
     SyncUserCommand,
     UpdateUserLastAccessedCommand,
+)
+from src.app.queries.user.get_activity_calories_query import (
+    GetActivityCaloriesQuery,
 )
 from src.app.queries.user.get_user_by_firebase_uid_query import (
     GetUserByFirebaseUidQuery,
@@ -53,6 +58,7 @@ from src.infra.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/users", tags=["Users"])
+router.include_router(avatar_router)
 
 
 class UpdateLanguageRequest(BaseModel):
@@ -69,6 +75,12 @@ class UpdateTimezoneRequest(BaseModel):
 
 class UpdateWeeklyAutoAdjustRequest(BaseModel):
     """Request body for leftover-split daily adjustment."""
+
+    enabled: bool
+
+
+class UpdateActivityCaloriesRequest(BaseModel):
+    """Request body for whether logged movement raises the food budget."""
 
     enabled: bool
 
@@ -306,9 +318,32 @@ async def update_weekly_auto_adjust(
     event_bus: EventBus = Depends(get_configured_event_bus),
 ):
     """Enable or disable leftover-split daily targets. Enabled by default."""
-    command = UpdateWeeklyAutoAdjustCommand(
-        user_id=user_id, enabled=request.enabled
-    )
+    command = UpdateWeeklyAutoAdjustCommand(user_id=user_id, enabled=request.enabled)
+    result = await event_bus.send(command)
+    return result
+
+
+@router.get("/activity-calories")
+async def get_activity_calories(
+    user_id: str = Depends(get_current_user_id),
+    event_bus: EventBus = Depends(get_configured_event_bus),
+):
+    """Return whether calories burned in logged movement raise the food budget."""
+    result = await event_bus.send(GetActivityCaloriesQuery(user_id=user_id))
+    return result
+
+
+@router.patch("/activity-calories")
+async def update_activity_calories(
+    request: UpdateActivityCaloriesRequest,
+    user_id: str = Depends(get_current_user_id),
+    event_bus: EventBus = Depends(get_configured_event_bus),
+):
+    """Let logged movement raise the food budget, or count food only.
+
+    Enabled by default. Movement entries keep logging either way.
+    """
+    command = UpdateActivityCaloriesCommand(user_id=user_id, enabled=request.enabled)
     result = await event_bus.send(command)
     return result
 

@@ -5,7 +5,10 @@ from typing import Any
 from src.app.commands.meal_planner import (
     AiAdjustMealPlanCommand,
     GenerateWeeklyMealPlanCommand,
+    LinkMealPlanSlotCommand,
     LogMealPlanSlotCommand,
+    SetMealPlanSlotSkipCommand,
+    UnlogMealPlanSlotCommand,
     UpdateGroceryDayLinesCommand,
     UpdateMealPlanPantryStockCommand,
     UpdateWeeklyMealPlanCommand,
@@ -16,13 +19,26 @@ from src.app.services.weekly_grocery_day_line_service import (
 )
 from src.app.services.weekly_meal_logging_service import WeeklyMealLoggingService
 from src.app.services.weekly_meal_plan_service import WeeklyMealPlanService
+from src.app.services.weekly_meal_slot_state_service import (
+    WeeklyMealSlotStateService,
+)
 from src.app.services.weekly_pantry_service import WeeklyPantryService
 
 
 @handles(GenerateWeeklyMealPlanCommand)
 class GenerateWeeklyMealPlanCommandHandler(EventHandler):
-    def __init__(self, uow_factory: Any):
-        self.service = WeeklyMealPlanService(uow_factory)
+    def __init__(
+        self,
+        uow_factory: Any,
+        *,
+        compact_week_percent: int = 0,
+        basket_target: int = 0,
+    ):
+        self.service = WeeklyMealPlanService(
+            uow_factory,
+            compact_week_percent=compact_week_percent,
+            basket_target=basket_target,
+        )
 
     async def handle(self, command):
         return await self.service.generate(command)
@@ -73,3 +89,38 @@ class LogMealPlanSlotCommandHandler(EventHandler):
 
     async def handle(self, command):
         return await self.service.log(command)
+
+
+@handles(UnlogMealPlanSlotCommand)
+class UnlogMealPlanSlotCommandHandler(EventHandler):
+    def __init__(
+        self,
+        uow_factory: Any,
+        *,
+        event_publisher: Any = None,
+        environment: str = "development",
+    ):
+        self.service = WeeklyMealSlotStateService(
+            uow_factory, event_publisher=event_publisher, environment=environment
+        )
+
+    async def handle(self, command):
+        return await self.service.unlog(command)
+
+
+@handles(LinkMealPlanSlotCommand)
+class LinkMealPlanSlotCommandHandler(EventHandler):
+    def __init__(self, uow_factory: Any):
+        self.service = WeeklyMealSlotStateService(uow_factory)
+
+    async def handle(self, command):
+        return await self.service.link(command)
+
+
+@handles(SetMealPlanSlotSkipCommand)
+class SetMealPlanSlotSkipCommandHandler(EventHandler):
+    def __init__(self, uow_factory: Any):
+        self.service = WeeklyMealSlotStateService(uow_factory)
+
+    async def handle(self, command):
+        return await self.service.set_skip(command)

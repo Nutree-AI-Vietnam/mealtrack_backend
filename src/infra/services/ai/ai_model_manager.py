@@ -31,11 +31,22 @@ TEXT_PURPOSES: set[ModelPurpose] = {
     ModelPurpose.RECIPE,
     ModelPurpose.DISCOVERY,
     ModelPurpose.GENERAL,
+    ModelPurpose.RECIPE_IMPORT,
 }
+# Purposes Workers AI never serves, whatever its purposes list says.
+OPENAI_ONLY_PURPOSES: frozenset[ModelPurpose] = frozenset(
+    {ModelPurpose.MEAL_PLAN_ADJUSTMENT, ModelPurpose.DESCRIBE_LOG}
+)
+# Purposes whose callers run their own correction pass on a contract miss.
+CORRECTED_PURPOSES: frozenset[ModelPurpose] = frozenset(
+    {ModelPurpose.PARSE_TEXT, ModelPurpose.DESCRIBE_LOG}
+)
 VISION_PURPOSES: set[ModelPurpose] = {
     ModelPurpose.MEAL_SCAN,
     ModelPurpose.FOOD_LABEL_SCAN,
+    ModelPurpose.SUPPLEMENT_LABEL_SCAN,
     ModelPurpose.INGREDIENT_SCAN,
+    ModelPurpose.RECIPE_IMAGE_SCAN,
 }
 
 FALLBACK_CHAINS: dict[ModelPurpose, list[str]] = {
@@ -48,7 +59,16 @@ FALLBACK_CHAINS: dict[ModelPurpose, list[str]] = {
     ModelPurpose.FOOD_LABEL_SCAN: [
         DEFAULT_OPENAI_MODEL,
     ],
+    # OpenAI only: its schema is enforced. Not in the Workers AI vision list,
+    # whose models get no schema.
+    ModelPurpose.SUPPLEMENT_LABEL_SCAN: [
+        DEFAULT_OPENAI_MODEL,
+    ],
     ModelPurpose.INGREDIENT_SCAN: [
+        DEFAULT_OPENAI_MODEL,
+    ],
+    # Recipe photos (cookbook pages, screenshots) and video frame text.
+    ModelPurpose.RECIPE_IMAGE_SCAN: [
         DEFAULT_OPENAI_MODEL,
     ],
     # ==========================================================================
@@ -56,6 +76,12 @@ FALLBACK_CHAINS: dict[ModelPurpose, list[str]] = {
     # ==========================================================================
     ModelPurpose.PARSE_TEXT: [
         DEFAULT_PARSE_TEXT_MODEL,
+    ],
+    # Ghi nhanh for every kind of log: OpenAI only, so its schema is enforced.
+    # Never routed to Workers AI, even when its purposes list names it.
+    ModelPurpose.DESCRIBE_LOG: [
+        DEFAULT_PARSE_TEXT_MODEL,
+        DEFAULT_OPENAI_MODEL,
     ],
     ModelPurpose.BARCODE: [DEFAULT_OPENAI_MODEL],
     ModelPurpose.MEAL_NAMES: [
@@ -66,6 +92,8 @@ FALLBACK_CHAINS: dict[ModelPurpose, list[str]] = {
     ],
     ModelPurpose.GENERAL: [DEFAULT_OPENAI_MODEL],
     ModelPurpose.MEAL_PLAN_ADJUSTMENT: [DEFAULT_OPENAI_MODEL],
+    # Reading a recipe out of a page, caption or transcript (long input).
+    ModelPurpose.RECIPE_IMPORT: [DEFAULT_OPENAI_MODEL],
     # ==========================================================================
     # RECIPE TASKS: Luna primary with the general OpenAI model as fallback.
     # ==========================================================================
@@ -164,6 +192,9 @@ class AIModelManager:
                 )
             elif settings.OPENAI_TEXT_MODEL not in recipe_chain:
                 recipe_chain.append(settings.OPENAI_TEXT_MODEL)
+        self._fallback_chains[ModelPurpose.DESCRIBE_LOG] = list(
+            dict.fromkeys([parse_text_model, settings.OPENAI_TEXT_MODEL])
+        )
         self._prepend_model_for_purposes(
             parse_text_model,
             {ModelPurpose.PARSE_TEXT},
@@ -252,10 +283,7 @@ class AIModelManager:
             p.strip().lower() for p in text_purposes_csv.split(",") if p.strip()
         }
         for purpose in ModelPurpose:
-            if (
-                purpose.value in configured
-                and purpose != ModelPurpose.MEAL_PLAN_ADJUSTMENT
-            ):
+            if purpose.value in configured and purpose not in OPENAI_ONLY_PURPOSES:
                 if purpose in {ModelPurpose.PARSE_TEXT, ModelPurpose.RECIPE}:
                     self._append_model_for_purposes(cf_model, {purpose})
                 else:
@@ -390,7 +418,7 @@ class AIModelManager:
                 self._log_content_rejected(purpose, model)
                 raise
             except Exception as e:
-                if purpose == ModelPurpose.PARSE_TEXT and isinstance(
+                if purpose in CORRECTED_PURPOSES and isinstance(
                     e, AIOutputValidationError
                 ):
                     # The application owns the single correction pass; a schema
@@ -430,6 +458,7 @@ class AIModelManager:
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Generate with vision, with automatic fallback."""
+        result_metadata = kwargs.pop("result_metadata", None)
         chain = self.get_fallback_chain(purpose)
         available = self._circuit_breaker.filter_available(chain)
 
@@ -472,6 +501,9 @@ class AIModelManager:
                     purpose_hint=purpose.value,  # NEW
                     **provider_kwargs,
                 )
+
+                if isinstance(result_metadata, dict):
+                    result_metadata.update(provider=provider.provider_name, model=model)
 
                 self._circuit_breaker.record_success(model)
 

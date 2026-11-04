@@ -80,7 +80,10 @@ def score_candidate(
             calories_by_case.setdefault(case.case_id, []).append(
                 nutrition.macros.total_calories
             )
-            if case.expected_foods:
+            identity_reviewed = (
+                bool(case.expected_foods) or case.expected_is_food is False
+            )
+            if identity_reviewed:
                 identity_case_count += 1
             if case.expected_is_food is not None:
                 food_detection_count += 1
@@ -91,11 +94,12 @@ def score_candidate(
                 or case.expected_is_food is not None
             ):
                 reviewed_case_count += 1
-                tp, fp, fn, grams = score_foods(case.expected_foods, foods)
-                true_positive += tp
-                false_positive += fp
-                false_negative += fn
-                portion_errors.extend(grams)
+                if identity_reviewed:
+                    tp, fp, fn, grams = score_foods(case.expected_foods, foods)
+                    true_positive += tp
+                    false_positive += fp
+                    false_negative += fn
+                    portion_errors.extend(grams)
                 if case.expected_calories_kcal is not None:
                     calorie_errors.append(
                         interval_error(

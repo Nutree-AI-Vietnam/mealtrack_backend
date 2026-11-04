@@ -264,6 +264,7 @@ class TestEnqueue:
     def test_scanner_job_stores_what_the_worker_needs(self, api):
         _echo_created(api.uow)
 
+        before = utc_now()
         response = api.client.post(
             "/v1/ai-jobs",
             json=_meal_scan_body(
@@ -283,6 +284,9 @@ class TestEnqueue:
         payload = dict(job.request_payload)
         meal_id = payload.pop("meal_id")
         assert str(UUID(meal_id)) == meal_id
+        # The server's receipt time, never the client's.
+        received_at = datetime.fromisoformat(payload.pop("received_at"))
+        assert before <= received_at <= utc_now()
         expected = {
             "image_url": IMAGE_URL,
             "public_id": "mealtrack/abc",
@@ -341,6 +345,7 @@ class TestEnqueue:
         assert response.status_code == 202
         payload = dict(_created_job(api.uow).request_payload)
         payload.pop("meal_id")
+        payload.pop("received_at")
         assert payload == {
             "image_url": IMAGE_URL,
             "public_id": "mealtrack/abc",
@@ -423,7 +428,7 @@ class TestEnqueue:
         api.uow.ai_jobs.create.assert_not_awaited()
 
     @pytest.mark.parametrize("job_type", ["chat", "dance", "MEAL_SCAN"])
-    def test_only_meal_scans_and_text_parses_are_queued(self, api, job_type):
+    def test_only_scans_text_parses_and_recipe_imports_are_queued(self, api, job_type):
         response = api.client.post(
             "/v1/ai-jobs",
             json={"id": JOB_ID, "type": job_type, "input": {"text": "2 eggs"}},
@@ -433,7 +438,10 @@ class TestEnqueue:
         assert response.json() == _error(
             "INVALID_JOB_TYPE",
             "Unsupported AI job type",
-            {"type": job_type, "supported": ["meal_scan", "parse_text"]},
+            {
+                "type": job_type,
+                "supported": ["meal_scan", "parse_text", "recipe_import"],
+            },
         )
         api.uow.ai_jobs.create.assert_not_awaited()
 

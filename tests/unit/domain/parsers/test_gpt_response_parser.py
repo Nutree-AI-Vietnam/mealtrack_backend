@@ -86,6 +86,25 @@ def test_parse_emoji_reads_canonical_emoji(gpt_parser):
 
 
 class TestGPTResponseParserFoodLimit:
+    @pytest.mark.parametrize("count", [9, 20])
+    def test_keeps_small_components_beyond_eight_rows(self, gpt_parser, count):
+        foods = [
+            {
+                "name": f"Visible component {index}",
+                "quantity_g": 0.5,
+                "macros": {"protein_g": 0, "carbs_g": 0.1, "fat_g": 0},
+                "confidence": 0.6,
+            }
+            for index in range(count)
+        ]
+        nutrition = gpt_parser.parse_to_nutrition(
+            {"structured_data": {"is_food": True, "foods": foods}}
+        )
+        assert [food.name for food in nutrition.food_items] == [
+            food["name"] for food in foods
+        ]
+        assert nutrition.macros.carbs == pytest.approx(count * 0.1)
+
     def test_rejects_food_items_over_max(self, gpt_parser):
         foods = [
             {
@@ -94,7 +113,7 @@ class TestGPTResponseParserFoodLimit:
                 "macros": {"protein_g": 1, "carbs_g": 2, "fat_g": 3},
                 "confidence": 0.8,
             }
-            for i in range(9)
+            for i in range(21)
         ]
 
         gpt_response = {

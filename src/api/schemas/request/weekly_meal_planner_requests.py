@@ -33,6 +33,15 @@ class WeeklyMealPlanSlotUpdateRequest(BaseModel):
     day_index: int = Field(ge=0, le=6)
     slot_index: int = Field(ge=0, le=WEEKLY_SLOTS_PER_DAY - 1)
     recipe_id: str | None = Field(default=None, max_length=36)
+    # One of the user's saved recipes (GET /v1/saved-suggestions id) instead
+    # of a catalog recipe.
+    saved_suggestion_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+    @model_validator(mode="after")
+    def one_recipe(self):
+        if self.recipe_id is not None and self.saved_suggestion_id is not None:
+            raise ValueError("send recipe_id or saved_suggestion_id, not both")
+        return self
 
 
 class UpdateWeeklyMealPlanRequest(BaseModel):
@@ -106,3 +115,21 @@ class LogMealPlanSlotRequest(BaseModel):
     meal_type: WeeklyPlannerMealType
     expected_recipe_id: str = Field(min_length=1, max_length=128)
     portion_multiplier: Literal[0.5, 1.0, 1.5, 2.0] = 1.0
+    # Rice eaten with the dish, in 55 g half-bowl servings (0-2 bowls).
+    rice_steps: int = Field(default=0, ge=0, le=4)
+
+
+class LinkMealPlanSlotRequest(BaseModel):
+    meal_id: str = Field(min_length=1, max_length=36)
+
+
+class RecipeBatchRequest(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=30)
+
+    @field_validator("ids")
+    @classmethod
+    def distinct_ids(cls, value: list[str]) -> list[str]:
+        ids = list(dict.fromkeys(item.strip() for item in value))
+        if any(not item or len(item) > 64 for item in ids):
+            raise ValueError("recipe ids must contain 1 to 64 characters")
+        return ids
