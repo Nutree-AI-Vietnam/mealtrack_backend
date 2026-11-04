@@ -63,6 +63,7 @@ class TdeeRequest:
     training_level: TrainingLevel | None = None
     macro_preset: MacroPreset = MacroPreset.STANDARD
     weight_loss_kg_per_week: float | None = None
+    weight_gain_kg_per_week: float | None = None
 
     def __post_init__(self):
         """Validate invariants."""
@@ -134,10 +135,12 @@ class MacroTargets:
 
 @dataclass
 class PaceRange:
-    """Lose-weight paces this person can pick, in kg per week.
+    """Paces this person can pick, in kg per week: a loss for a cut goal, a
+    gain for a bulk goal.
 
-    max_kg_per_week is below min_kg_per_week when the calorie floor allows less
-    than the slow limit, and 0 when it allows no deficit at all.
+    For a loss, max_kg_per_week is below min_kg_per_week when the calorie floor
+    allows less than the slow limit, and 0 when it allows no deficit at all. A
+    gain has no floor, so its maximum is the fast limit.
     """
 
     min_kg_per_week: float
@@ -166,7 +169,7 @@ class TdeeResponse:
         None  # BMR formula used (e.g., "Mifflin-St Jeor", "Katch-McArdle")
     )
     macro_preset: MacroPreset = MacroPreset.STANDARD
-    # Only for a cut goal.
+    # Only for a cut or bulk goal.
     pace_range: PaceRange | None = None
 
     def to_dict(self) -> dict:

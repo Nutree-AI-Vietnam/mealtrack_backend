@@ -41,6 +41,7 @@ class TdeeCalculationService:
             sex=request.sex,
             macro_preset=request.macro_preset,
             weight_loss_kg_per_week=request.weight_loss_kg_per_week,
+            weight_gain_kg_per_week=request.weight_gain_kg_per_week,
         )
         return TdeeResponse(
             bmr=round(bmr, 1),
@@ -52,6 +53,8 @@ class TdeeCalculationService:
             pace_range=(
                 pace_range(request.weight_kg, tdee, bmr, request.sex)
                 if request.goal == Goal.CUT
+                else gain_pace_range(request.weight_kg)
+                if request.goal == Goal.BULK
                 else None
             ),
         )
@@ -98,6 +101,7 @@ class TdeeCalculationService:
         sex: Sex = None,
         macro_preset: MacroPreset = MacroPreset.STANDARD,
         weight_loss_kg_per_week: float | None = None,
+        weight_gain_kg_per_week: float | None = None,
     ) -> MacroTargets:
         """Calculate macro targets using weight-based approach.
 
@@ -117,14 +121,19 @@ class TdeeCalculationService:
         # Determine target calories based on goal
         if goal == Goal.CUT:
             deficit = (
-                daily_deficit_kcal(weight_loss_kg_per_week)
+                daily_pace_kcal(weight_loss_kg_per_week)
                 if weight_loss_kg_per_week
                 else TDEEConstants.CUTTING_DEFICIT
             )
             calories = tdee - deficit
             goal_key = "cut"
         elif goal == Goal.BULK:
-            calories = tdee + TDEEConstants.BULKING_SURPLUS
+            surplus = (
+                daily_pace_kcal(weight_gain_kg_per_week)
+                if weight_gain_kg_per_week
+                else TDEEConstants.BULKING_SURPLUS
+            )
+            calories = tdee + surplus
             goal_key = "bulk"
         elif goal == Goal.RECOMP:
             calories = tdee + TDEEConstants.RECOMP_ADJUSTMENT
@@ -275,15 +284,17 @@ class TdeeCalculationService:
         return self._calculate_all_macro_targets(tdee, weight_kg, goal, training_level)
 
 
-# Weight-loss pace: a chosen kg per week between the research limits, capped
-# where the daily target would drop below the calorie floor.
+# Weight pace: a chosen kg per week between the research limits. A loss is
+# capped where the daily target would drop below the calorie floor; a gain has
+# no floor, so only the fast limit caps it.
 
 # Same factor the mobile app uses in WeightConstants.kgToLbFactor.
 KG_TO_LB = 2.20462
 
 
-def daily_deficit_kcal(kg_per_week: float) -> float:
-    """Daily deficit for a weekly loss: ~7,700 kcal per kg, spread over 7 days."""
+def daily_pace_kcal(kg_per_week: float) -> float:
+    """Daily deficit for a weekly loss, or surplus for a weekly gain: ~7,700 kcal
+    per kg, spread over 7 days."""
     return kg_per_week * TDEEConstants.KCAL_PER_KG_BODY_WEIGHT / 7
 
 
@@ -302,28 +313,43 @@ def _round_down_to_step(kg: float) -> float:
     return math.floor(kg * 100 + 1e-9) / 100
 
 
+def _within_pace_limits(kg: float) -> float:
+    return round(
+        min(
+            max(kg, TDEEConstants.PACE_MIN_KG_PER_WEEK),
+            TDEEConstants.PACE_MAX_KG_PER_WEEK,
+        ),
+        2,
+    )
+
+
 def pace_range(weight_kg: float, tdee: float, bmr: float, sex: Sex) -> PaceRange:
-    """The paces this person can pick, from the slow limit to their own maximum."""
-    cap_kg = max(0.0, tdee - calorie_floor(bmr, sex)) / daily_deficit_kcal(1)
+    """The loss paces this person can pick, from the slow limit to their own maximum."""
+    cap_kg = max(0.0, tdee - calorie_floor(bmr, sex)) / daily_pace_kcal(1)
     max_kg = _round_down_to_step(min(TDEEConstants.PACE_MAX_KG_PER_WEEK, cap_kg))
-
-    def within_limits(kg: float) -> float:
-        return round(
-            min(
-                max(kg, TDEEConstants.PACE_MIN_KG_PER_WEEK),
-                TDEEConstants.PACE_MAX_KG_PER_WEEK,
-            ),
-            2,
-        )
-
     return PaceRange(
         min_kg_per_week=TDEEConstants.PACE_MIN_KG_PER_WEEK,
         max_kg_per_week=max_kg,
-        recommended_low_kg=within_limits(
+        recommended_low_kg=_within_pace_limits(
             weight_kg * TDEEConstants.PACE_RECOMMENDED_LOW_PERCENT
         ),
-        recommended_high_kg=within_limits(
+        recommended_high_kg=_within_pace_limits(
             weight_kg * TDEEConstants.PACE_RECOMMENDED_HIGH_PERCENT
+        ),
+    )
+
+
+def gain_pace_range(weight_kg: float) -> PaceRange:
+    """The gain paces anyone can pick: no floor caps a surplus, so the slider
+    runs from the slow limit to the fast one."""
+    return PaceRange(
+        min_kg_per_week=TDEEConstants.PACE_MIN_KG_PER_WEEK,
+        max_kg_per_week=TDEEConstants.PACE_MAX_KG_PER_WEEK,
+        recommended_low_kg=_within_pace_limits(
+            weight_kg * TDEEConstants.GAIN_PACE_RECOMMENDED_LOW_PERCENT
+        ),
+        recommended_high_kg=_within_pace_limits(
+            weight_kg * TDEEConstants.GAIN_PACE_RECOMMENDED_HIGH_PERCENT
         ),
     )
 
@@ -340,11 +366,18 @@ def clamp_pace(kg_per_week: float | None, allowed: PaceRange) -> float | None:
 
 
 def allowed_pace(request: TdeeRequest, kg_per_week: float | None) -> float | None:
-    """The requested pace capped by this person's floor; None for a non-cut goal."""
-    if kg_per_week is None:
+    """The requested loss pace capped by this person's floor; None for a non-cut goal."""
+    if kg_per_week is None or request.goal != Goal.CUT:
         return None
     allowed = TdeeCalculationService().calculate_tdee(request).pace_range
     return clamp_pace(kg_per_week, allowed) if allowed else None
+
+
+def allowed_gain_pace(request: TdeeRequest, kg_per_week: float | None) -> float | None:
+    """The requested gain pace, capped only at the fast limit; None for a non-bulk goal."""
+    if kg_per_week is None or request.goal != Goal.BULK:
+        return None
+    return clamp_pace(kg_per_week, gain_pace_range(request.weight_kg))
 
 
 def kg_to_lb(kg_per_week: float | None) -> float | None:

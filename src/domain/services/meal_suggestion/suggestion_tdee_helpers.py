@@ -49,6 +49,7 @@ def build_tdee_request(profile: Any) -> TdeeRequest:
         unit_system=UnitSystem.METRIC,
         macro_preset=preset,
         weight_loss_kg_per_week=getattr(profile, "weight_loss_kg_per_week", None),
+        weight_gain_kg_per_week=getattr(profile, "weight_gain_kg_per_week", None),
     )
 
 

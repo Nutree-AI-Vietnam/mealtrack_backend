@@ -56,6 +56,7 @@ class UserProfileService:
                 body_fat_pct=profile.body_fat_percentage,
                 unit_system=UnitSystem.METRIC,
                 weight_loss_kg_per_week=profile.weight_loss_kg_per_week,
+                weight_gain_kg_per_week=profile.weight_gain_kg_per_week,
             )
 
             tdee_result = self.tdee_service.calculate_tdee(tdee_request)
