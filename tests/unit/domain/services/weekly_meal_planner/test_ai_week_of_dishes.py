@@ -1,5 +1,7 @@
 """Asking a model for a week of dishes, with nothing real behind it."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from src.domain.services.prompts.prompt_template_manager import PromptTemplateManager
@@ -8,6 +10,7 @@ from src.domain.services.weekly_meal_planner.ai_dish import (
     generate_week_of_dishes,
     language_block,
     reference_block,
+    review_ai_dish,
 )
 
 BUILDERS = {
@@ -30,12 +33,16 @@ def _recipe(name, *, protein=25.0, steps=None, extra_line=True):
     if extra_line:
         lines.append(
             {
-                "name": "steamed greens",
-                "amount": 120,
+                # Carries the rest of a real lunch: a dish that comes to a
+                # fifth of its slot is now turned away for being off target,
+                # which is the point, but it must not take every fixture
+                # with it.
+                "name": "rice and steamed greens",
+                "amount": 220,
                 "unit": "g",
                 "protein": 3,
-                "carbs": 12,
-                "fat": 1,
+                "carbs": 60,
+                "fat": 12,
                 "fiber": 3,
             }
         )
@@ -683,7 +690,15 @@ class TestTwiceTheSameProteinInOneDay:
             "name": name,
             "ingredients": [
                 {**protein_line, "amount": 150, "unit": "g"},
-                {"name": "carrot", "amount": 80, "unit": "g", "carbs": 8},
+                # Enough to land near a 600 kcal slot, so the off-target
+                # check is not what these tests end up measuring.
+                {
+                    "name": "rice and carrot",
+                    "amount": 220,
+                    "unit": "g",
+                    "carbs": 62,
+                    "fat": 10,
+                },
             ],
             "recipe_steps": [{"instruction": "Nấu chín kỹ rồi dọn ra."}],
         }
@@ -971,3 +986,223 @@ class TestReadingTheProteinOffTheName:
         assert protein_of_name("Đậu hũ sốt cà chua") == "tofu"
         assert protein_of_name("Cà tím nướng mỡ hành") == ""
         assert protein_of_name("Cá basa kho tiêu") == "fish"
+
+
+class TestADishThatIsFoodButNotThisMeal:
+    """80-1600 kcal says "this is food"; it says nothing about the slot."""
+
+    @staticmethod
+    def _at(kcal):
+        """A dish priced to roughly kcal, through the macro sum."""
+        protein = kcal / 4.0 / 2
+        carbs = kcal / 4.0 / 2
+        from src.domain.services.weekly_meal_planner.ai_dish import (
+            snapshot_from_ai_recipe,
+        )
+
+        return snapshot_from_ai_recipe(
+            {
+                "name": "Cơm gà",
+                "ingredients": [
+                    {"name": "chicken", "amount": 150, "unit": "g", "protein": protein},
+                    {"name": "rice", "amount": 200, "unit": "g", "carbs": carbs},
+                ],
+                "recipe_steps": [{"instruction": "Nấu chín kỹ."}],
+            },
+            dish_id="ai-1",
+        )
+
+    def test_a_dish_twice_its_slot_is_turned_away(self):
+        """1,580 kcal into a slot asking 675 made a 3,320 kcal day."""
+        dish = self._at(1400)
+
+        reasons = review_ai_dish(dish, target_calories=675)
+
+        assert any(r.startswith("OFF_TARGET_CALORIES") for r in reasons)
+        # Still food by the absolute bounds, which is why this was needed.
+        assert "IMPLAUSIBLE_CALORIES" not in review_ai_dish(dish)
+
+    def test_a_dish_a_third_of_its_slot_is_turned_away(self):
+        assert any(
+            r.startswith("OFF_TARGET_CALORIES")
+            for r in review_ai_dish(self._at(200), target_calories=675)
+        )
+
+    def test_the_band_keeps_what_a_real_week_produced(self):
+        """Eighteen priced dishes: most landed at 100-140% of target."""
+        for share in (0.75, 1.0, 1.2, 1.4):
+            dish = self._at(675 * share)
+            assert not any(
+                r.startswith("OFF_TARGET")
+                for r in review_ai_dish(dish, target_calories=675)
+            ), f"{share:.0%} of target should be kept"
+
+    def test_no_target_means_no_such_check(self):
+        assert not any(
+            r.startswith("OFF_TARGET") for r in review_ai_dish(self._at(1400))
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_slot_s_own_target_is_what_is_checked(self):
+        model = _Model(["Huge lunch", "Right lunch"])
+
+        week = await generate_week_of_dishes(
+            _requests(1, kcal=600), ask=model.ask, new_id=lambda: "x", **BUILDERS
+        )
+
+        # The shared fixture lands near 600, so nothing is off target.
+        assert len(week.dishes) == 1
+        assert not any(
+            r.startswith("OFF_TARGET") for d in week.rejected for r in d.reasons
+        )
+
+
+class TestWhenOurOwnPricingIsDown:
+    """Every tier failing returns zeros, not an exception."""
+
+    @staticmethod
+    def _dish():
+        from src.domain.services.weekly_meal_planner.ai_dish import (
+            snapshot_from_ai_recipe,
+        )
+
+        return snapshot_from_ai_recipe(
+            {
+                "name": "Cơm gà",
+                "ingredients": [
+                    {"name": "chicken", "amount": 150, "unit": "g"},
+                    {"name": "rice", "amount": 200, "unit": "g"},
+                ],
+                "recipe_steps": [{"instruction": "Nấu chín kỹ."}],
+            },
+            dish_id="ai-1",
+        )
+
+    def test_a_silent_zero_is_a_pricing_failure_not_a_bad_dish(self):
+        from src.domain.services.weekly_meal_planner.ai_dish import (
+            PricingUnavailable,
+            priced_snapshot,
+        )
+
+        nothing = SimpleNamespace(
+            protein=0.0, carbs=0.0, fat=0.0, fiber=0.0, sugar=0.0, ingredients=[]
+        )
+
+        with pytest.raises(PricingUnavailable):
+            priced_snapshot(self._dish(), nothing)
+
+    def test_a_priced_dish_is_kept(self):
+        from src.domain.services.weekly_meal_planner.ai_dish import priced_snapshot
+
+        priced = SimpleNamespace(
+            protein=40.0, carbs=60.0, fat=15.0, fiber=3.0, sugar=1.0, ingredients=[]
+        )
+
+        assert priced_snapshot(self._dish(), priced).protein == 40.0
+
+    @pytest.mark.asyncio
+    async def test_the_week_stops_rather_than_paying_for_twenty_more(self):
+        """Every slot would fail the same way, each costing a recipe call."""
+        from src.domain.services.weekly_meal_planner.ai_dish import PricingUnavailable
+
+        model = _Model(["A", "B", "C", "D", "E"])
+
+        async def nothing(lines):
+            return SimpleNamespace(
+                protein=0.0, carbs=0.0, fat=0.0, fiber=0.0, sugar=0.0, ingredients=[]
+            )
+
+        with pytest.raises(PricingUnavailable):
+            await generate_week_of_dishes(
+                _requests(3),
+                ask=model.ask,
+                price=nothing,
+                new_id=lambda: "x",
+                **BUILDERS,
+            )
+
+        # One names call and one recipe call, not three recipes.
+        assert len([p for p in model.prompts if "Generate complete" in p]) == 1
+
+
+class TestSoftAndHardNo:
+    """A hard no is never served; a soft no is, rather than nothing."""
+
+    @staticmethod
+    def _sized(name, kcal):
+        """A dish of roughly kcal, spread over enough grams to be food.
+
+        The macros have to fit in the weight: squeezed into 350 g they
+        break the per-100g mass bound and the dish is hard-rejected, which
+        is a different test.
+        """
+        half = kcal / 8.0
+        grams = max(350.0, (half * 2) / 0.45)
+        return {
+            "name": name,
+            "ingredients": [
+                {"name": "chicken", "amount": grams / 2, "unit": "g", "protein": half},
+                {"name": "rice", "amount": grams / 2, "unit": "g", "carbs": half},
+            ],
+            "recipe_steps": [{"instruction": "Nấu chín kỹ rồi dọn ra."}],
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_better_sized_dish_is_preferred_when_one_is_left(self):
+        model = _Model(
+            ["Huge", "Right"],
+            recipes={
+                "Huge": self._sized("Cơm quá to", 1500),
+                "Right": self._sized("Cơm vừa", 620),
+            },
+        )
+
+        week = await generate_week_of_dishes(
+            _requests(1, kcal=600), ask=model.ask, new_id=lambda: "x", **BUILDERS
+        )
+
+        assert [d.name for d in week.dishes.values()] == ["Cơm vừa"]
+        assert any(r.startswith("OFF_TARGET") for d in week.rejected for r in d.reasons)
+
+    @pytest.mark.asyncio
+    async def test_an_off_target_dish_beats_an_empty_slot(self):
+        """Every name is wrong-sized; the slot still gets fed."""
+        model = _Model(
+            ["One", "Two", "Three"],
+            recipes={
+                name: self._sized(f"Cơm {name}", 1500)
+                for name in ("One", "Two", "Three")
+            },
+        )
+
+        week = await generate_week_of_dishes(
+            _requests(1, kcal=600), ask=model.ask, new_id=lambda: "x", **BUILDERS
+        )
+
+        assert week.unfilled == ()
+        assert len(week.dishes) == 1
+
+    @pytest.mark.asyncio
+    async def test_an_unsafe_dish_is_never_served_however_few_names_remain(self):
+        """Safety is not traded for a filled slot."""
+        model = _Model(
+            ["Only"],
+            recipes={
+                "Only": {
+                    "name": "Bò tái",
+                    "ingredients": [
+                        {"name": "beef", "amount": 150, "unit": "g", "protein": 75},
+                        {"name": "rice", "amount": 200, "unit": "g", "carbs": 75},
+                    ],
+                    "recipe_steps": [{"instruction": "Thái bò tái rồi dọn ra."}],
+                }
+            },
+        )
+
+        week = await generate_week_of_dishes(
+            _requests(1, kcal=600), ask=model.ask, new_id=lambda: "x", **BUILDERS
+        )
+
+        assert week.dishes == {}
+        assert week.unfilled == ((0, 1),)
+        assert any("raw or rare" in r for d in week.rejected for r in d.reasons)

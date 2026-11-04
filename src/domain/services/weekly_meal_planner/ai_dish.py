@@ -49,6 +49,20 @@ MIN_DISH_KCAL = 80.0
 MAX_DISH_KCAL = 1_600.0
 MIN_DISH_INGREDIENTS = 2
 MIN_DISH_STEPS = 1
+# How far a dish may land from what its own slot asked for. The absolute
+# bounds above say "this is food"; they say nothing about whether it is
+# this meal. A real week priced 1,580 kcal into a slot asking for 675 and
+# the dish passed, because 1,580 is under MAX_DISH_KCAL — that day came to
+# 3,320 against an 1,800 target, which is useless to somebody counting.
+#
+# The band is wide because a dish is not a portion and the pricing tiers
+# disagree with each other. Measured over eighteen priced dishes, most
+# landed between 100% and 140% of target; the band keeps those and turns
+# away the 167%, 178% and 234% outliers that wrecked the day totals.
+MIN_TARGET_SHARE = 0.6
+MAX_TARGET_SHARE = 1.5
+# Reasons worth another name but never worth an empty slot.
+SOFT_REASONS = ("OFF_TARGET_CALORIES", "SAME_PROTEIN_TODAY")
 
 
 @dataclass(frozen=True)
@@ -84,12 +98,17 @@ def review_ai_dish(
     snapshot: SavedRecipeSnapshot,
     *,
     taken: frozenset[str] = frozenset(),
+    target_calories: int | None = None,
 ) -> tuple[str, ...]:
     """Reasons this dish cannot take a slot, or nothing when it can.
 
     ``taken`` holds the keys of dishes the week already serves, so a model
     that repeats itself does not fill the week with one meal — the complaint
     that sent the planner here in the first place.
+
+    ``target_calories`` is what this slot asked for. Without it the dish is
+    only checked for being food at all; with it, a dish that is food but
+    twice the meal is turned away too.
     """
     reasons: list[str] = []
     name = (snapshot.name or "").strip()
@@ -105,6 +124,10 @@ def review_ai_dish(
     kcal = float(snapshot.calories)
     if not MIN_DISH_KCAL <= kcal <= MAX_DISH_KCAL:
         reasons.append("IMPLAUSIBLE_CALORIES")
+    elif target_calories and target_calories > 0:
+        share = kcal / float(target_calories)
+        if not MIN_TARGET_SHARE <= share <= MAX_TARGET_SHARE:
+            reasons.append(f"OFF_TARGET_CALORIES_{round(share * 100)}PCT")
 
     grams = sum(line.grams or 0.0 for line in snapshot.ingredients)
     if grams > 0:
@@ -264,6 +287,14 @@ def dish_calories(snapshot: SavedRecipeSnapshot) -> float:
     )
 
 
+class PricingUnavailable(RuntimeError):
+    """Every tier failed, so this dish's macros are not knowable right now.
+
+    Distinct from a dish being wrong: nothing the model wrote is at fault,
+    and retrying with a different dish will fail the same way.
+    """
+
+
 def priced_snapshot(snapshot: SavedRecipeSnapshot, priced) -> SavedRecipeSnapshot:
     """The dish with the macros the backend worked out for its ingredients.
 
@@ -274,6 +305,13 @@ def priced_snapshot(snapshot: SavedRecipeSnapshot, priced) -> SavedRecipeSnapsho
     for having no calories, which is how a week came back empty.
 
     ``priced`` is what NutritionLookupService.calculate_meal_macros returns.
+
+    Raises PricingUnavailable when it comes back with no energy at all for
+    a dish that has ingredients with weight. Every tier failing returns
+    zeros rather than raising, and those zeros used to be written straight
+    onto the snapshot: the dish then summed to nothing, was turned away for
+    implausible calories, and a whole week died blaming the dishes for an
+    outage in our own pricing. A caller that cannot price is told so.
     """
     by_name = {
         str(line.name).strip().casefold(): line
@@ -283,6 +321,14 @@ def priced_snapshot(snapshot: SavedRecipeSnapshot, priced) -> SavedRecipeSnapsho
         _with_macros(line, by_name.get(str(line.name).strip().casefold()))
         for line in snapshot.ingredients
     )
+    macros = (
+        float(getattr(priced, "protein", 0.0) or 0.0),
+        float(getattr(priced, "carbs", 0.0) or 0.0),
+        float(getattr(priced, "fat", 0.0) or 0.0),
+    )
+    weighed = any(line.grams for line in snapshot.ingredients)
+    if weighed and not any(value > 0 for value in macros):
+        raise PricingUnavailable(snapshot.name)
     return replace(
         snapshot,
         ingredients=lines,
@@ -863,35 +909,43 @@ async def _dish_for_slot(
                 snapshot = priced_snapshot(
                     snapshot, await price(pricing_lines(snapshot))
                 )
+            except PricingUnavailable:
+                # Not this dish's fault and not fixable by writing another:
+                # every tier is down, and the next twenty slots would each
+                # pay for a recipe only to be turned away the same way.
+                raise
             except Exception:  # noqa: BLE001 - an unpriced dish is turned away
                 rejected.append(
                     RejectedDish(name=snapshot.name, reasons=("NOT_PRICED",))
                 )
                 continue
-        reasons = review_ai_dish(snapshot, taken=frozenset(taken))
-        if (
-            not reasons
-            and attempt < len(candidates)
-            and _repeats_today(snapshot, proteins_today)
-        ):
-            # Only while another name is left to try. A second helping of
-            # chicken is a worse week; an empty slot is a broken one, so the
-            # last name standing is taken whatever it is built on. The try
-            # is given back once, so the extra name can actually be reached.
+        reasons = review_ai_dish(
+            snapshot,
+            taken=frozenset(taken),
+            target_calories=request.target_calories,
+        )
+        # Two kinds of no. A hard one — unsafe, not food, already on the
+        # table — means this dish never goes in a slot. A soft one — off
+        # its slot's target, or the day's protein a second time — means a
+        # better dish exists, and is worth one more name. Neither is worth
+        # an empty slot, so the last name standing is taken as it is.
+        hard = tuple(r for r in reasons if not r.startswith(SOFT_REASONS))
+        if hard:
+            rejected.append(RejectedDish(name=snapshot.name, reasons=reasons))
+            continue
+        soft = reasons or (
+            (f"SAME_PROTEIN_TODAY_{main_protein(snapshot).upper()}",)
+            if _repeats_today(snapshot, proteins_today)
+            else ()
+        )
+        if soft and attempt < len(candidates):
             budget += bonus
             bonus = 0
-            rejected.append(
-                RejectedDish(
-                    name=snapshot.name,
-                    reasons=(f"SAME_PROTEIN_TODAY_{main_protein(snapshot).upper()}",),
-                )
-            )
+            rejected.append(RejectedDish(name=snapshot.name, reasons=soft))
             continue
-        if not reasons:
-            if name:
-                used.add(dish_key(name))
-            return snapshot
-        rejected.append(RejectedDish(name=snapshot.name, reasons=reasons))
+        if name:
+            used.add(dish_key(name))
+        return snapshot
     return None
 
 
