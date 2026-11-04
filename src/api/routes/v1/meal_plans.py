@@ -23,6 +23,7 @@ from fastapi import (
 from src.api.base_dependencies import (
     get_async_food_reference_repository,
     get_planner_translation_service,
+    weekly_plan_ai_dishes_enabled,
 )
 from src.api.dependencies.ai_jobs import get_ai_job_service
 from src.api.dependencies.auth import get_current_user_id
@@ -120,7 +121,6 @@ from src.domain.utils.timezone_utils import (
     is_valid_timezone,
     normalize_timezone,
 )
-from src.infra.config.settings import get_settings
 from src.planner_observability import planner_timed
 from src.planner_request_policy import planner_deadline, timeout_until
 
@@ -144,7 +144,7 @@ PLAN_PREPARING_FEATURE = "plan_preparing"
 
 def _plan_features() -> list[str]:
     features = list(WEEKLY_PLAN_FEATURES)
-    if get_settings().WEEKLY_PLAN_AI_DISHES_ENABLED:
+    if weekly_plan_ai_dishes_enabled():
         features.append(PLAN_PREPARING_FEATURE)
     return features
 
@@ -309,7 +309,7 @@ async def get_current_weekly_plan(
             if daily_calories <= 0:
                 daily_calories = 2000
             preferences = WeeklyMealPlanPreferences(people=1)
-            if get_settings().WEEKLY_PLAN_AI_DISHES_ENABLED:
+            if weekly_plan_ai_dishes_enabled():
                 return await _prepared_plan_response(
                     request,
                     event_bus=event_bus,
@@ -336,7 +336,7 @@ async def get_current_weekly_plan(
                 )
             )
 
-        if get_settings().WEEKLY_PLAN_AI_DISHES_ENABLED:
+        if weekly_plan_ai_dishes_enabled():
             await _prepare_next_week(
                 request,
                 event_bus=event_bus,

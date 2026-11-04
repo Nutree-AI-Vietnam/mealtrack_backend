@@ -1,6 +1,7 @@
 """Asking for a week when its dishes come from a model."""
 
 from datetime import date
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -126,21 +127,21 @@ class TestOpeningTheWeek:
 
 class TestWhatTheClientIsTold:
     def test_preparing_is_advertised_only_while_the_flag_is_on(self, monkeypatch):
-        monkeypatch.setattr(
-            route,
-            "get_settings",
-            lambda: SimpleNamespace(WEEKLY_PLAN_AI_DISHES_ENABLED=True),
-        )
+        monkeypatch.setattr(route, "weekly_plan_ai_dishes_enabled", lambda: True)
         assert route.PLAN_PREPARING_FEATURE in route._plan_features()
 
-        monkeypatch.setattr(
-            route,
-            "get_settings",
-            lambda: SimpleNamespace(WEEKLY_PLAN_AI_DISHES_ENABLED=False),
-        )
+        monkeypatch.setattr(route, "weekly_plan_ai_dishes_enabled", lambda: False)
         features = route._plan_features()
         assert route.PLAN_PREPARING_FEATURE not in features
         assert "saved_recipe_slots" in features
+
+    def test_the_flag_is_read_through_the_module_allowed_to_reach_infra(self):
+        """src.api may not import src.infra; the contract is CI-enforced."""
+        import src.api.routes.v1.meal_plans as module
+
+        source = Path(module.__file__).read_text()
+        assert "from src.infra" not in source
+        assert "weekly_plan_ai_dishes_enabled" in source
 
     def test_the_flag_is_off_by_default(self):
         from src.infra.config.settings import get_settings

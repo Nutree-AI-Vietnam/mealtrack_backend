@@ -22,7 +22,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "20261104095702973837"
-down_revision: str | None = "20261103103408775030"
+down_revision: str | None = "20261104041432763875"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
