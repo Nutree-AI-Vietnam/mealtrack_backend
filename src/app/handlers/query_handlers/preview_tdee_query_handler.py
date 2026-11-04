@@ -74,6 +74,7 @@ class PreviewTdeeQueryHandler(EventHandler[PreviewTdeeQuery, dict[str, Any]]):
                 MacroPreset.KETO if query.diet_type == "keto" else MacroPreset.STANDARD
             ),
             weight_loss_kg_per_week=query.weight_loss_kg_per_week,
+            weight_gain_kg_per_week=query.weight_gain_kg_per_week,
         )
 
         # Calculate TDEE

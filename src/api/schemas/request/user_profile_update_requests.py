@@ -108,6 +108,12 @@ class UpdateMetricsRequest(BaseModel):
         le=1.0,
         description="Lose-weight pace in kg per week. Omitted keeps the current pace.",
     )
+    weight_gain_kg_per_week: float | None = Field(
+        None,
+        ge=0.01,
+        le=1.0,
+        description="Gain-weight pace in kg per week. Omitted keeps the current pace.",
+    )
     dietary_preferences: list[Annotated[str, Field(max_length=40)]] | None = Field(
         None,
         max_length=10,

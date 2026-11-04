@@ -10,16 +10,22 @@ TDEE_PREVIEW_CALCULATION_CONTRACT = "onboarding_preview_v2"
 
 
 class PaceRangeResponse(BaseModel):
-    """Lose-weight paces this person can pick, in kg per week (cut goal only)."""
+    """Paces this person can pick, in kg per week: a loss for a cut goal, a
+    gain for a bulk goal."""
 
     min_kg_per_week: float = Field(..., description="Slow limit of the slider")
     max_kg_per_week: float = Field(
         ...,
-        description="Fastest pace before the target drops below the calorie floor; "
-        "can be under min_kg_per_week, and 0 when no deficit fits",
+        description="Cut: fastest pace before the target drops below the calorie "
+        "floor; can be under min_kg_per_week, and 0 when no deficit fits. "
+        "Bulk: the fast limit",
     )
-    recommended_low_kg: float = Field(..., description="0.5% of body weight per week")
-    recommended_high_kg: float = Field(..., description="1% of body weight per week")
+    recommended_low_kg: float = Field(
+        ..., description="0.5% of body weight per week for a cut, 0.25% for a bulk"
+    )
+    recommended_high_kg: float = Field(
+        ..., description="1% of body weight per week for a cut, 0.5% for a bulk"
+    )
 
     @classmethod
     def from_result(cls, result: dict) -> "PaceRangeResponse | None":
@@ -80,7 +86,7 @@ class TdeeCalculationResponse(BaseModel):
         None, description="Profile target revision for cache validation"
     )
     pace_range: PaceRangeResponse | None = Field(
-        None, description="Lose-weight pace range; present for a cut goal"
+        None, description="Pace range; present for a cut or bulk goal"
     )
 
     class Config:

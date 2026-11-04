@@ -129,6 +129,7 @@ async def save_user_onboarding(
             custom_carbs_g=request.custom_carbs_g,
             custom_fat_g=request.custom_fat_g,
             weight_loss_kg_per_week=request.weight_loss_kg_per_week,
+            weight_gain_kg_per_week=request.weight_gain_kg_per_week,
             pace_clinician_disclaimer=request.pace_clinician_disclaimer,
         )
 
@@ -265,6 +266,7 @@ async def update_user_metrics(
         daily_water_goal_ml=request.daily_water_goal_ml,
         reset_water_goal=request.reset_water_goal,
         weight_loss_kg_per_week=request.weight_loss_kg_per_week,
+        weight_gain_kg_per_week=request.weight_gain_kg_per_week,
         dietary_preferences=request.dietary_preferences,
     )
 

@@ -54,6 +54,7 @@ async def preview_tdee(
         custom_fat_g=payload.custom_fat_g,
         requested_calories=payload.requested_calories,
         weight_loss_kg_per_week=payload.weight_loss_kg_per_week,
+        weight_gain_kg_per_week=payload.weight_gain_kg_per_week,
     )
 
     result = await event_bus.send(query)

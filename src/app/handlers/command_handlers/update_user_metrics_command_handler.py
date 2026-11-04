@@ -23,7 +23,7 @@ from src.domain.ports.integration_event_publisher_port import (
 from src.domain.services.meal_suggestion.suggestion_tdee_helpers import (
     build_tdee_request,
 )
-from src.domain.services.tdee_service import allowed_pace
+from src.domain.services.tdee_service import allowed_gain_pace, allowed_pace
 from src.domain.services.training_policy import normalize_training_pair
 from src.domain.utils.timezone_utils import (
     get_zone_info,
@@ -64,6 +64,7 @@ def _has_metric_update(command: UpdateUserMetricsCommand) -> bool:
         or command.body_fat_percent_provided
         or command.reset_water_goal
         or command.weight_loss_kg_per_week is not None
+        or command.weight_gain_kg_per_week is not None
         or command.dietary_preferences is not None
     )
 
@@ -127,6 +128,7 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                 profile.fitness_goal,
                 profile.training_level,
                 profile.weight_loss_kg_per_week,
+                profile.weight_gain_kg_per_week,
                 _diet_set(profile.dietary_preferences),
             )
             journey_inputs_before = (
@@ -322,6 +324,24 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                         get_zone_info(timezone_name)
                     ).date()
 
+            if command.weight_gain_kg_per_week is not None:
+                # A gain has no floor; only the fast limit caps it. A change
+                # resets today like a loss pace does.
+                try:
+                    gain = allowed_gain_pace(
+                        build_tdee_request(profile), command.weight_gain_kg_per_week
+                    )
+                except ValueError as exc:
+                    raise ValidationException(str(exc)) from exc
+                if profile.weight_gain_kg_per_week != gain:
+                    timezone_name = await resolve_user_timezone_async(
+                        command.user_id, uow
+                    )
+                    profile.weight_gain_kg_per_week = gain
+                    profile.weight_loss_pace_reset_on = datetime.now(
+                        get_zone_info(timezone_name)
+                    ).date()
+
             if command.dietary_preferences is not None:
                 profile.dietary_preferences = _clean_diets(command.dietary_preferences)
 
@@ -340,6 +360,7 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                 profile.fitness_goal,
                 profile.training_level,
                 profile.weight_loss_kg_per_week,
+                profile.weight_gain_kg_per_week,
                 _diet_set(profile.dietary_preferences),
             )
             journey_inputs_after = (

@@ -120,6 +120,7 @@ class GetUserTdeeQueryHandler(EventHandler[GetUserTdeeQuery, dict[str, Any]]):
                 training_level=training_level,
                 macro_preset=macro_preset,
                 weight_loss_kg_per_week=profile.weight_loss_kg_per_week,
+                weight_gain_kg_per_week=profile.weight_gain_kg_per_week,
             )
 
             # Calculate TDEE

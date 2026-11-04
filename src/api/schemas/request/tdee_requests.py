@@ -89,6 +89,12 @@ class TdeeCalculationRequest(BaseModel):
         le=1.0,
         description="Lose-weight pace in kg per week. Omitted keeps the flat cutting deficit.",
     )
+    weight_gain_kg_per_week: float | None = Field(
+        None,
+        ge=0.01,
+        le=1.0,
+        description="Gain-weight pace in kg per week. Omitted keeps the flat bulking surplus.",
+    )
 
     @model_validator(mode="after")
     def validate_measurements_with_units(self):
