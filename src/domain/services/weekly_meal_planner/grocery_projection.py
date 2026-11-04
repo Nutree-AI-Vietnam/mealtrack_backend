@@ -634,6 +634,32 @@ def aggregate_grocery(
     return tuple(items)
 
 
+def catalog_meal_servings(meal) -> int:
+    """How many people a catalog recipe feeds, as far as anything can tell.
+
+    A crawled recipe is written for the pot. Staging has 920 published
+    recipes and not one of them states its servings, so trusting the stored
+    macros as a single portion reads a 1.2 kg pot of hu tieu as one meal.
+
+    The recipe's own figure wins when it has one. Otherwise the weighed
+    ingredients estimate it, the same way the shopping list does, and a
+    recipe too light to judge counts as one serving.
+    """
+    base = getattr(meal, "base_servings", None)
+    confidence = getattr(meal, "serving_confidence", "unknown")
+    if base and base > 0 and confidence != "unknown":
+        return int(base)
+    total = Decimal("0")
+    for line in getattr(meal, "ingredients", ()) or ():
+        quantity = getattr(line, "quantity", None)
+        if quantity is None:
+            continue
+        normalized = normalize_ingredient_quantity(quantity, getattr(line, "unit", ""))
+        if normalized.dimension == "weight":
+            total += normalized.amount
+    return estimate_servings_from_weight(float(total)) or 1
+
+
 def _counted_amount(
     counted_units: Mapping[int, CountedUnit] | None,
     food_ids: set[int],

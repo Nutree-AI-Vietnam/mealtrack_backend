@@ -35,6 +35,7 @@ from src.domain.services.weekly_meal_planner.allergen_constraint import (
     recipe_excluded_by_allergen,
 )
 from src.domain.services.weekly_meal_planner.grocery_projection import (
+    catalog_meal_servings,
     fresh_ingredient_id,
 )
 from src.domain.services.weekly_meal_planner.meal_practicality import (
@@ -323,7 +324,7 @@ class WeeklyPlanGenerationService:
         targets = _slot_calorie_targets(daily_calories)
         return targets, [
             [
-                (meal, abs(meal.calories - targets[slot]))
+                (meal, abs(meal_serving_calories(meal) - targets[slot]))
                 for meal in candidates
                 if self._supports_slot(meal, slot)
             ]
@@ -739,13 +740,27 @@ class ComposedSlot:
 
 
 def meal_macros(meal: CatalogMeal) -> tuple[float, float, float, float]:
-    """Protein, carbs, fat and fiber of one serving, as floats."""
+    """Protein, carbs, fat and fiber of ONE SERVING, as floats.
+
+    The stored figures belong to the whole recipe. A crawled recipe is
+    written for the pot and almost never says how many it feeds, so taking
+    them as a single portion plans a pot of hu tieu as one dinner and puts
+    every day far over its target. They are divided here, once, so every
+    caller downstream is already per serving.
+    """
+    servings = max(catalog_meal_servings(meal), 1)
     return (
-        float(meal.protein_g or 0),
-        float(meal.carbs_g or 0),
-        float(meal.fat_g or 0),
-        float(meal.fiber_g or 0),
+        float(meal.protein_g or 0) / servings,
+        float(meal.carbs_g or 0) / servings,
+        float(meal.fat_g or 0) / servings,
+        float(meal.fiber_g or 0) / servings,
     )
+
+
+def meal_serving_calories(meal: CatalogMeal) -> float:
+    """Calories in one serving, by the canonical formula."""
+    protein, carbs, fat, fiber = meal_macros(meal)
+    return Macros.raw_total_calories(protein, carbs, fat, fiber)
 
 
 def _serving(

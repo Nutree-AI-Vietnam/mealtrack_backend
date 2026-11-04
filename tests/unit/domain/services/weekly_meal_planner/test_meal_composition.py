@@ -1,5 +1,6 @@
 """Composing a meal from catalog dishes, portions and rice."""
 
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
@@ -10,10 +11,13 @@ from src.domain.services.weekly_meal_planner.weekly_plan_generation_service impo
     LOGGABLE_PORTIONS,
     MAX_RICE_STEPS,
     MEAL_KCAL_SHARE_CAP,
+    ComposedSlot,
     DayTargets,
     _macro_cost,
     compose_day,
     day_totals,
+    meal_macros,
+    meal_serving_calories,
 )
 
 
@@ -321,4 +325,84 @@ def test_the_other_macros_stay_symmetric_apart_from_protein():
 
     assert _macro_cost(low_fat, targets) == pytest.approx(
         _macro_cost(high_fat, targets)
+    )
+
+
+def _pot(meal_id="pot", grams=1200, protein="240", carbs="480", fat="80"):
+    """A recipe written for the pot, as every crawled recipe is."""
+    return CatalogMeal(
+        id=meal_id,
+        catalog_key=meal_id,
+        content_hash="a" * 64,
+        name="Hủ tiếu",
+        cuisine="vietnamese",
+        description=None,
+        image_url=None,
+        protein_g=Decimal(protein),
+        carbs_g=Decimal(carbs),
+        fat_g=Decimal(fat),
+        fiber_g=Decimal("20"),
+        meal_types=("lunch",),
+        ingredients=(
+            CatalogMealIngredient(
+                food_reference_id=1,
+                display_name="nguyên liệu",
+                quantity=Decimal(str(grams)),
+                unit="g",
+            ),
+        ),
+    )
+
+
+def test_a_pot_of_food_is_not_one_serving():
+    """Staging has 920 recipes and not one states its servings."""
+    pot = _pot()
+
+    protein, carbs, fat, _ = meal_macros(pot)
+
+    # 1200 g of solids reads as about five servings.
+    assert protein == pytest.approx(240 / 5)
+    assert carbs == pytest.approx(480 / 5)
+    assert fat == pytest.approx(80 / 5)
+
+
+def test_a_recipe_that_states_its_servings_is_believed():
+    stated = replace(_pot(), base_servings=3, serving_confidence="verified")
+
+    protein, _, _, _ = meal_macros(stated)
+
+    assert protein == pytest.approx(240 / 3)
+
+
+def test_a_stated_serving_count_nobody_checked_is_not_believed():
+    """serving_confidence unknown means the number came from nowhere."""
+    claimed = replace(_pot(), base_servings=1, serving_confidence="unknown")
+
+    protein, _, _, _ = meal_macros(claimed)
+
+    assert protein < 240
+
+
+def test_a_plate_sized_recipe_stays_one_serving():
+    plate = _pot(grams=280, protein="30", carbs="40", fat="10")
+
+    protein, _, _, _ = meal_macros(plate)
+
+    assert protein == pytest.approx(30)
+
+
+def test_a_recipe_too_light_to_judge_is_left_alone():
+    """Under the weighed floor there is nothing honest to divide by."""
+    tiny = _pot(grams=40, protein="5", carbs="5", fat="1")
+
+    protein, _, _, _ = meal_macros(tiny)
+
+    assert protein == pytest.approx(5)
+
+
+def test_serving_calories_follow_the_divided_macros():
+    pot = _pot()
+
+    assert meal_serving_calories(pot) == pytest.approx(
+        day_totals((ComposedSlot(0, 1, pot.id),), {pot.id: pot})[0]
     )
