@@ -86,29 +86,27 @@ class GooglePlaySubscriptionAdapter(PlaySubscriptionPort):
     def from_settings(
         cls, settings: Any | None = None
     ) -> GooglePlaySubscriptionAdapter:
-        """The adapter for this environment; disabled unless fully configured."""
+        """The adapter for this environment; unusable unless fully configured."""
         if settings is None:
             from src.infra.config.settings import get_settings
 
             settings = get_settings()
-        switched_on = bool(settings.GOOGLE_PLAY_RENEWAL_CANCEL_ENABLED)
         timeout = float(settings.GOOGLE_PLAY_API_TIMEOUT_SECONDS)
         package_name = str(settings.GOOGLE_PLAY_PACKAGE_NAME or "").strip()
         access_token = None
-        if switched_on:
-            if is_package_name(package_name):
-                access_token = load_access_token(
-                    settings.FIREBASE_CREDENTIALS,
-                    settings.FIREBASE_SERVICE_ACCOUNT_JSON,
-                    timeout,
-                )
-            else:
-                logger.error("GOOGLE_PLAY_PACKAGE_NAME is not an application id")
+        if is_package_name(package_name):
+            access_token = load_access_token(
+                settings.FIREBASE_CREDENTIALS,
+                settings.FIREBASE_SERVICE_ACCOUNT_JSON,
+                timeout,
+            )
+        else:
+            logger.error("GOOGLE_PLAY_PACKAGE_NAME is not an application id")
         return cls(
             package_name=package_name,
             access_token=access_token,
             timeout_seconds=timeout,
-            switched_on=switched_on,
+            switched_on=True,
             sandbox_enabled=bool(settings.GOOGLE_PLAY_CANCEL_SANDBOX),
         )
 

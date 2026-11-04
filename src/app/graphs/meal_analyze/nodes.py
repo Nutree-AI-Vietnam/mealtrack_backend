@@ -225,11 +225,13 @@ async def analyze_vision(
             load_correction_hints_for_scan,
         )
 
-        meals_repo = getattr(runtime.uow, "meals", None) if runtime.uow else None
+        # runtime.uow is not entered yet, and a unit of work only has
+        # repositories inside ``async with``; let the loader open it.
+        uow = runtime.uow
         correction_hints = await load_correction_hints_for_scan(
             user_id=command.user_id,
             user_description=command.user_description,
-            meals_repo=meals_repo,
+            uow_factory=(lambda: uow) if uow is not None else None,
         )
         if command.user_description:
             strategy = AnalysisStrategyFactory.create_user_context_strategy(

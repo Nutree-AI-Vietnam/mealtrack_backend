@@ -151,13 +151,10 @@ class Settings(BaseSettings):
 
     # Google Play Developer API, signed in as the Firebase service account
     # above: a Play lifetime purchase turns off the buyer's Play plan renewal.
-    GOOGLE_PLAY_RENEWAL_CANCEL_ENABLED: bool = Field(
-        default=False,
-        description="Cancel Play plan renewals on a Play lifetime purchase.",
-    )
+    # Always on; it needs the service account's Play Console access to work.
     GOOGLE_PLAY_PACKAGE_NAME: str = Field(
-        default="",
-        description="This environment's Android application id in Play Console.",
+        default="com.nutreeai.mobile",
+        description="The Android application id in Play Console.",
     )
     GOOGLE_PLAY_CANCEL_SANDBOX: bool = Field(
         default=False,

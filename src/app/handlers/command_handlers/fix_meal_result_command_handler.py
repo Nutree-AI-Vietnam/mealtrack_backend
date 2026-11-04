@@ -10,13 +10,19 @@ from typing import Any
 
 from src.api.exceptions import (
     AuthorizationException,
+    ConflictException,
     ResourceNotFoundException,
     ValidationException,
 )
 from src.app.commands.meal.fix_meal_result_command import FixMealResultCommand
 from src.app.events.base import EventHandler, handles
 from src.app.events.meal.meal_events import publish_meal_event
+from src.domain.exceptions.ai_exceptions import MealResponseLocalizationError
 from src.domain.model.meal import Meal, MealStatus
+from src.domain.model.meal.meal_response_localization import (
+    localize_food_items,
+    parse_meal_response_localization,
+)
 from src.domain.model.meal.scan_correction_memory import build_fix_result_history_entry
 from src.domain.model.meal_projection import MealProjection
 from src.domain.parsers.vision_response_parser import VisionResponseParsingError
@@ -142,6 +148,7 @@ class FixMealResultCommandHandler(EventHandler[FixMealResultCommand, Any]):
             old_calories = float(effective_meal_calories(meal))
             old_meal_date = (meal.created_at or utc_now()).date()
             dish_name = meal.dish_name
+            analyzed_edit_count = meal.edit_count
 
         try:
             image_bytes = await self._download_image_bytes(image_url)
@@ -187,13 +194,27 @@ class FixMealResultCommandHandler(EventHandler[FixMealResultCommand, Any]):
         try:
             parsed_nutrition = self.gpt_parser.parse_to_nutrition(vision_result)
             new_dish_name = self.gpt_parser.parse_dish_name(vision_result)
-        except VisionResponseParsingError as exc:
+            new_items = list(parsed_nutrition.food_items or [])
+            # Scans store names in the user's language and the parser returns
+            # canonical English ones, so rename before merging: that keeps the
+            # display language and lets unchanged items match their old row.
+            localization = parse_meal_response_localization(
+                vision_result.get("structured_data"),
+                command.language,
+                expected_food_count=len(new_items),
+            )
+            if localization is not None:
+                new_items = localize_food_items(new_items, localization)
+                new_dish_name = localization.dish_name
+        except (VisionResponseParsingError, MealResponseLocalizationError) as exc:
+            logger.warning(
+                "fix_result_parse_failed meal_id=%s err=%s", command.meal_id, exc
+            )
             raise ValidationException(
                 "Could not understand the corrected analysis. Meal was not changed.",
                 error_code="FIX_RESULT_PARSE_FAILED",
             ) from exc
 
-        new_items = list(parsed_nutrition.food_items or [])
         if not new_items:
             raise ValidationException(
                 "The corrected analysis returned no ingredients. Meal was not changed.",
@@ -247,6 +268,13 @@ class FixMealResultCommandHandler(EventHandler[FixMealResultCommand, Any]):
                 raise ValidationException(
                     "Meal must be in READY status to fix",
                     error_code="MEAL_NOT_READY",
+                )
+            # The merge was built from the meal as it was before vision ran;
+            # an edit saved since then would be silently overwritten.
+            if meal.edit_count != analyzed_edit_count:
+                raise ConflictException(
+                    "The meal was edited during re-analysis. Meal was not changed.",
+                    error_code="FIX_RESULT_MEAL_CHANGED",
                 )
 
             updated_meal = append_fix_result_correction(
