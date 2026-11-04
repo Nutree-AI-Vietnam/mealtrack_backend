@@ -55,7 +55,8 @@ class WeeklyMealPlanORM(Base, TimestampMixin):
         ),
         Index("idx_weekly_meal_plans_user_status", "user_id", "status"),
         CheckConstraint(
-            "status IN ('draft', 'confirmed')", name="ck_weekly_meal_plan_status"
+            "status IN ('draft', 'confirmed', 'preparing')",
+            name="ck_weekly_meal_plan_status",
         ),
         CheckConstraint("people BETWEEN 1 AND 6", name="ck_weekly_meal_plan_people"),
         CheckConstraint("revision > 0", name="ck_weekly_meal_plan_revision"),

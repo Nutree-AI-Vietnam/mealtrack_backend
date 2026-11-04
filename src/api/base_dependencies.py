@@ -511,6 +511,17 @@ def get_meal_analyze_graph_settings():
     }
 
 
+def weekly_plan_ai_dishes_enabled() -> bool:
+    """Whether a week's dishes come from a model rather than the catalogue.
+
+    Read through here because src.api may not import src.infra directly, and
+    base_dependencies is the module the contract allows to.
+    """
+    from src.infra.config.settings import get_settings
+
+    return bool(getattr(get_settings(), "WEEKLY_PLAN_AI_DISHES_ENABLED", False))
+
+
 def get_parse_text_settings() -> dict[str, bool]:
     """Return parse-text feature settings for API composition."""
     from src.infra.config.settings import get_settings

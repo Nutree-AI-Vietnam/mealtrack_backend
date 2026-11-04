@@ -479,11 +479,18 @@ def _slot_from_saved_recipe(
             quantity, unit = Decimal(str(item.grams)), "g"
         else:
             quantity, unit = None, item.unit
+        # A referenced line is shown in the reader's language from
+        # food_reference.name_vi. A line that resolved to nothing has no such
+        # row, and the presentation layer would pay a translator to guess at
+        # it — so it is bought under the name the writer already gave. The
+        # category is still read off the English name, which is what the
+        # word lists are written in.
+        shown = item.shown_name if item.food_reference_id is None else item.name
         ingredients.append(
             GroceryIngredient(
                 position=position,
                 food_reference_id=item.food_reference_id,
-                name=item.name,
+                name=shown,
                 quantity=quantity,
                 unit=unit,
                 category=_resolve_grocery_category(item.name, None),

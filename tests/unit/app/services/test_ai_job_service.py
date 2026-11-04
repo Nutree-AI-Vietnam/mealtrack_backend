@@ -278,7 +278,13 @@ async def test_capabilities_describe_what_this_server_runs(
 
     assert await h.service.capabilities() == {
         "ai_jobs": enabled,
-        "types": ["chat", "meal_scan", "parse_text", "recipe_import"],
+        "types": [
+            "chat",
+            "meal_scan",
+            "parse_text",
+            "recipe_import",
+            "weekly_plan",
+        ],
         "max_attempts": 4,
         "poll_interval_ms": 2500,
         "chat_background": chat_expected,

@@ -167,6 +167,45 @@ class AiJobService:
             self._wakeup.notify()
         return job, created
 
+    async def start_weekly_plan_job(
+        self,
+        *,
+        job_id: str,
+        user_id: str,
+        language: str,
+        request: dict[str, Any],
+    ) -> tuple[AiJob, bool]:
+        """Queue the write of one week's dishes.
+
+        Not reachable through POST /v1/ai-jobs: only the meal-plan endpoints
+        know the plan id and the day's targets, and only they have put a
+        plan in 'preparing' for the job to fill. Re-sending the same id and
+        request returns the existing job, so a second tab asking for the
+        same week does not start a second write.
+        """
+        await self._require_writable()
+        fingerprint = ai_job_request_fingerprint(AiJobType.WEEKLY_PLAN, request)
+        async with self._uow_factory() as uow:
+            job, created = await uow.ai_jobs.create(
+                NewAiJob(
+                    id=job_id,
+                    user_id=user_id,
+                    job_type=AiJobType.WEEKLY_PLAN,
+                    language=language,
+                    request_payload=dict(request),
+                    request_fingerprint=fingerprint,
+                )
+            )
+        if not created and (
+            job.user_id != user_id
+            or job.job_type != AiJobType.WEEKLY_PLAN
+            or job.request_fingerprint != fingerprint
+        ):
+            raise AiJobConflictError(job_id)
+        if created:
+            self._wakeup.notify()
+        return job, created
+
     async def get(self, *, user_id: str, job_id: str) -> AiJob:
         await self._require_schema()
         async with self._uow_factory() as uow:

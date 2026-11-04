@@ -40,7 +40,13 @@ async def test_ai_job_capabilities_advertise_the_job_contract():
 
     assert body == {
         "ai_jobs": True,
-        "types": ["chat", "meal_scan", "parse_text", "recipe_import"],
+        "types": [
+            "chat",
+            "meal_scan",
+            "parse_text",
+            "recipe_import",
+            "weekly_plan",
+        ],
         "max_attempts": 4,
         "poll_interval_ms": 2500,
         "chat_background": True,
@@ -112,6 +118,7 @@ def test_ai_job_capabilities_route(ready, status_code):
             "meal_scan",
             "parse_text",
             "recipe_import",
+            "weekly_plan",
         ]
     else:
         assert response.json() == {"detail": UNAVAILABLE}

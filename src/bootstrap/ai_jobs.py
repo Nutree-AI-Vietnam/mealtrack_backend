@@ -28,6 +28,7 @@ from src.app.services.ai_jobs import (
     RecipeImportJobExecutor,
 )
 from src.app.services.ai_jobs.executors import AiJobExecutor, Send
+from src.app.services.ai_jobs.weekly_plan_executor import WeeklyPlanJobExecutor
 from src.app.services.chat_turn_orchestrator import ChatTurnOrchestrator
 from src.domain.model.ai_jobs import AiJobType
 from src.domain.model.recipe_import.limits import IMPORT_DEADLINE_SECONDS
@@ -115,6 +116,7 @@ def build_ai_job_executors(
         AiJobType.RECIPE_IMPORT: RecipeImportJobExecutor(
             send=send, to_result=recipe_import_result
         ),
+        AiJobType.WEEKLY_PLAN: WeeklyPlanJobExecutor(send=send),
     }
 
 
