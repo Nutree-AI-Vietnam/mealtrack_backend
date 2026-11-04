@@ -54,6 +54,7 @@ async def preview_tdee(
         custom_fat_g=payload.custom_fat_g,
         requested_calories=payload.requested_calories,
         weight_loss_kg_per_week=payload.weight_loss_kg_per_week,
+        weight_gain_kg_per_week=payload.weight_gain_kg_per_week,
     )
 
     result = await event_bus.send(query)
@@ -78,4 +79,5 @@ async def preview_tdee(
         target_revision=result.get("target_revision", 0),
         pace_range=PaceRangeResponse.from_result(result),
         deficit_blocked_reason=result.get("deficit_blocked_reason"),
+        gain_pace_blocked_reason=result.get("gain_pace_blocked_reason"),
     )

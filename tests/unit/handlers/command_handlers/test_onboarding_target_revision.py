@@ -36,6 +36,7 @@ def _profile(revision=1):
         custom_carbs_g=None,
         custom_fat_g=None,
         weight_loss_kg_per_week=None,
+        weight_gain_kg_per_week=None,
         pace_clinician_disclaimer=False,
         weight_loss_pace_reset_on=None,
         profile_target_revision=revision,

@@ -220,6 +220,7 @@ class UserProfileMapper:
             daily_water_goal_ml=profile_entity.daily_water_goal_ml,
             profile_target_revision=profile_entity.profile_target_revision,
             weight_loss_kg_per_week=profile_entity.weight_loss_kg_per_week,
+            weight_gain_kg_per_week=profile_entity.weight_gain_kg_per_week,
             pace_clinician_disclaimer=bool(
                 profile_entity.pace_clinician_disclaimer or False
             ),
@@ -265,6 +266,7 @@ class UserProfileMapper:
             daily_water_goal_ml=profile_domain.daily_water_goal_ml,
             profile_target_revision=profile_domain.profile_target_revision,
             weight_loss_kg_per_week=profile_domain.weight_loss_kg_per_week,
+            weight_gain_kg_per_week=profile_domain.weight_gain_kg_per_week,
             pace_clinician_disclaimer=profile_domain.pace_clinician_disclaimer,
             weight_loss_pace_reset_on=profile_domain.weight_loss_pace_reset_on,
         )

@@ -60,7 +60,9 @@ class UserProfileDomainModel(BaseDomainModel):
     daily_water_goal_ml: int | None = None
     profile_target_revision: int = 1
     weight_loss_kg_per_week: float | None = None
+    weight_gain_kg_per_week: float | None = None
     pace_clinician_disclaimer: bool = False
+    # Local date of the latest pace change, loss or gain.
     weight_loss_pace_reset_on: date | None = None
 
 

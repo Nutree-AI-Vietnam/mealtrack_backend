@@ -171,6 +171,12 @@ class UserMetricsResponse(BaseModel):
     weight_loss_lb_per_week: Optional[float] = Field(
         None, description="Display conversion of the same kg per week"
     )
+    weight_gain_kg_per_week: float | None = Field(
+        None, description="Saved gain-weight pace in kg per week, or unset"
+    )
+    weight_gain_lb_per_week: float | None = Field(
+        None, description="Display conversion of the same kg per week"
+    )
     pace_clinician_disclaimer: bool = Field(
         False,
         description="Show the clinician disclaimer when the user answered yes",

@@ -122,9 +122,14 @@ class TDEEConstants:
     # Recommended band, Helms 2014: 0.5-1% of body weight per week.
     PACE_RECOMMENDED_LOW_PERCENT = 0.005
     PACE_RECOMMENDED_HIGH_PERCENT = 0.01
-    # About 7,700 kcal per kg of body weight lost.
+    # Gain-weight pace for a bulk goal uses the same limits; its recommended
+    # band is 0.25-0.5% of body weight per week.
+    GAIN_PACE_RECOMMENDED_LOW_PERCENT = 0.0025
+    GAIN_PACE_RECOMMENDED_HIGH_PERCENT = 0.005
+    # About 7,700 kcal per kg of body weight lost or gained.
     KCAL_PER_KG_BODY_WEIGHT = 7700
-    BULKING_SURPLUS = 300  # 300 calorie surplus (lean bulk)
+    # 300 calorie surplus (lean bulk). Used when no gain pace is chosen.
+    BULKING_SURPLUS = 300
     # MAINTENANCE_ADJUSTMENT removed - use RECOMP_ADJUSTMENT instead
     RECOMP_ADJUSTMENT = 0  # No calorie adjustment for recomposition
 

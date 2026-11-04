@@ -11,7 +11,7 @@ from src.domain.services.tdee_service import (
     TdeeCalculationService,
     allowed_pace,
     clamp_pace,
-    daily_deficit_kcal,
+    daily_pace_kcal,
     kg_to_lb,
     pace_range,
 )
@@ -36,8 +36,8 @@ def _cut_request(**overrides) -> TdeeRequest:
 
 
 def test_a_kg_a_week_costs_about_1100_kcal_a_day():
-    assert daily_deficit_kcal(1) == pytest.approx(1100)
-    assert daily_deficit_kcal(0.5) == pytest.approx(550)
+    assert daily_pace_kcal(1) == pytest.approx(1100)
+    assert daily_pace_kcal(0.5) == pytest.approx(550)
     assert kg_to_lb(0.59) == pytest.approx(1.3, abs=0.01)
     assert kg_to_lb(None) is None
 
@@ -81,9 +81,11 @@ def test_no_room_for_a_deficit_gives_a_zero_maximum():
     assert pace_range(50, 1200, 1000, Sex.FEMALE).max_kg_per_week == 0
 
 
-def test_only_a_cut_reports_a_pace_range():
+def test_a_bulk_reports_the_gain_range_and_recomp_none():
     service = TdeeCalculationService()
-    assert service.calculate_tdee(_cut_request(goal=Goal.BULK)).pace_range is None
+    # The gain range has no floor cap; test_weight_gain_pace.py covers it.
+    bulk = service.calculate_tdee(_cut_request(goal=Goal.BULK)).pace_range
+    assert bulk.max_kg_per_week == TDEEConstants.PACE_MAX_KG_PER_WEEK
     assert service.calculate_tdee(_cut_request(goal=Goal.RECOMP)).pace_range is None
 
 

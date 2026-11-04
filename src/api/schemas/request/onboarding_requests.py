@@ -87,6 +87,12 @@ class OnboardingCompleteRequest(BaseModel):
         le=1.0,
         description="Lose-weight pace in kg per week. Omitted keeps the flat cutting deficit.",
     )
+    weight_gain_kg_per_week: float | None = Field(
+        None,
+        ge=0.01,
+        le=1.0,
+        description="Gain-weight pace in kg per week. Omitted keeps the flat bulking surplus.",
+    )
     pace_clinician_disclaimer: bool | None = Field(
         None,
         description="User answered yes to the clinician-care question.",

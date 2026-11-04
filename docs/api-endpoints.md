@@ -634,6 +634,35 @@ handler/schema when implementing; the bullets below are the durable WHY.
   5/20/75 with calories derived from the returned macro triple. Details live in
   `system-architecture.md` and the preview handler.
 
+### Weight pace (`weight_loss_kg_per_week`, `weight_gain_kg_per_week`)
+
+- `POST /v1/user-profiles/metrics`, `POST /v1/tdee/preview` and the onboarding
+  `POST /v1/user-profiles/` accept both, from 0.01 to 1.0 kg a week (422
+  outside). A loss pace is saved only for a cut goal and a gain pace only for a
+  bulk goal; sent for any other goal, it clears the saved pace of that kind.
+- Cut: deficit = kg × 7700 ÷ 7 (about 1,100 kcal a day per kg a week), capped
+  at the person's own maximum, where the target would drop below the calorie
+  floor. Bulk: surplus = kg × 7700 ÷ 7, capped only at 1.0 kg. Without a pace,
+  cut keeps the flat −300 and bulk the flat +300.
+- `pace_range` in the TDEE preview and user TDEE responses: for cut, 0.25 kg to
+  the person's maximum with a 0.5–1% of body weight band; for bulk, 0.25–1.0 kg
+  with a 0.25–0.5% band; null for recomp, and for a cut whose deficit is
+  blocked (`deficit_blocked_reason`: minors, underweight adults, or a condition
+  such as pregnancy). Band ends are clamped into 0.25–1.0.
+- A bulk gets no gain range, and keeps the flat +300 even with a saved gain
+  pace, for under-18s and for pregnancy, breastfeeding, an eating-disorder
+  history or kidney disease, each of which has its own gain or intake target.
+  `gain_pace_blocked_reason` (`minor` or `health_condition`) says why, and a
+  gain pace sent then is not saved. Insulin-treated diabetes and underweight
+  adults keep the gain pace.
+- `GET /v1/user-profiles/metrics` returns both paces and their `_lb_per_week`
+  conversions, null when unset. Apps send `weight_gain_kg_per_week` only to a
+  server whose `GET` carries the key, because metrics requests forbid unknown
+  fields.
+- Any pace change, loss or gain, sets `weight_loss_pace_reset_on` to the user's
+  local today, so the weekly budget rebuilds today's target from the new base
+  instead of spreading the week's leftover.
+
 ### My Plan date of birth (`/v1/user-profiles/metrics`)
 
 - `GET` always carries `date_of_birth` (`YYYY-MM-DD` or `null`). Apps send
