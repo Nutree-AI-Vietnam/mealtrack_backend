@@ -1,5 +1,6 @@
 """What the planner remembers about how one person eats."""
 
+from src.domain.model.weekly_meal_planner.meal_locale import VIETNAM
 from src.domain.model.weekly_meal_planner.user_food_memory import (
     CONFIDENT_MEAL_COUNT,
     EMPTY_MEMORY,
@@ -7,7 +8,6 @@ from src.domain.model.weekly_meal_planner.user_food_memory import (
     UserFoodMemory,
     build_user_food_memory,
 )
-from src.domain.services.weekly_meal_planner.meal_locale import VIETNAM
 
 
 def _meal(name, *items, cuisine="vietnamese"):

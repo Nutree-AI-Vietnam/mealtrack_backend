@@ -39,6 +39,11 @@ from src.domain.model.weekly_meal_planner import (
     WeeklyMealPlanPreferences,
     WeeklyMealPlanSlotAdjustment,
 )
+from src.domain.model.weekly_meal_planner.meal_locale import (
+    DEFAULT_LOCALE,
+    MealLocale,
+    locale_for_timezone,
+)
 from src.domain.model.weekly_meal_planner.user_food_memory import (
     EMPTY_MEMORY,
     LoggedMealShape,
@@ -56,11 +61,6 @@ from src.domain.services.weekly_meal_planner.allergen_constraint import (
 from src.domain.services.weekly_meal_planner.grocery_projection import (
     DerivedGroceryItem,
     fresh_ingredient_id,
-)
-from src.domain.services.weekly_meal_planner.meal_locale import (
-    DEFAULT_LOCALE,
-    MealLocale,
-    locale_for_timezone,
 )
 from src.domain.services.weekly_meal_planner.slot_rules import (
     ensure_base_revision,

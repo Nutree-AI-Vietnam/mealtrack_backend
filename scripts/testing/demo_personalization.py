@@ -23,6 +23,11 @@ if str(ROOT) not in sys.path:
 
 from src.domain.model.meal_recommendation import CatalogMeal, CatalogMealIngredient
 from src.domain.model.weekly_meal_planner import WeeklyMealPlanPreferences
+from src.domain.model.weekly_meal_planner.meal_locale import (
+    VIETNAM,
+    MealLocale,
+    locale_for_timezone,
+)
 from src.domain.model.weekly_meal_planner.user_food_memory import (
     EMPTY_MEMORY,
     LoggedMealShape,
@@ -34,11 +39,6 @@ from src.domain.services.weekly_meal_planner.grocery_projection import (
     GroceryIngredient,
     GrocerySlot,
     aggregate_grocery,
-)
-from src.domain.services.weekly_meal_planner.meal_locale import (
-    VIETNAM,
-    MealLocale,
-    locale_for_timezone,
 )
 from src.domain.services.weekly_meal_planner.weekly_plan_generation_service import (
     DayTargets,

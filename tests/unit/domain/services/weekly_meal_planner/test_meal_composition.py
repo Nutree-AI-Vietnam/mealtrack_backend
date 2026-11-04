@@ -5,7 +5,7 @@ from decimal import Decimal
 import pytest
 
 from src.domain.model.meal_recommendation import CatalogMeal, CatalogMealIngredient
-from src.domain.services.weekly_meal_planner.meal_locale import MealLocale
+from src.domain.model.weekly_meal_planner.meal_locale import MealLocale
 from src.domain.services.weekly_meal_planner.weekly_plan_generation_service import (
     LOGGABLE_PORTIONS,
     MAX_RICE_STEPS,

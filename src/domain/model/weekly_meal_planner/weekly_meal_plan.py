@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
 
+from .meal_locale import DEFAULT_LOCALE
 from .saved_recipe import SavedRecipeSnapshot
 
 WEEKLY_DAYS = 7
@@ -17,11 +18,13 @@ SLOT_MEAL_TYPES: tuple[str, ...] = ("breakfast", "lunch", "dinner")
 # it ("plan"), or the user linked a meal they had already logged ("diary").
 SLOT_LOG_SOURCE_PLAN = "plan"
 SLOT_LOG_SOURCE_DIARY = "diary"
-# Servings POST /slots/{id}/log accepts, and the rice a plan may ask for in
-# 55 g half-bowl steps (Viet Nam NIN cereal serving).
+# Servings POST /slots/{id}/log accepts, and the staple a plan may ask for,
+# in the default locale's steps. Derived from the pack rather than written
+# again, so the two can never drift apart.
 PLANNED_PORTIONS: tuple[float, ...] = (0.5, 1.0, 1.5, 2.0)
-MAX_PLANNED_RICE_STEPS = 4
-RICE_STEP_GRAMS = 55
+MAX_PLANNED_RICE_STEPS = DEFAULT_LOCALE.max_staple_steps
+RICE_STEP_GRAMS = DEFAULT_LOCALE.staple_step_grams
+RICE_STEP_MACROS = DEFAULT_LOCALE.staple_step_macros
 
 SLOT_LOG_SOURCES: frozenset[str] = frozenset(
     {SLOT_LOG_SOURCE_PLAN, SLOT_LOG_SOURCE_DIARY}

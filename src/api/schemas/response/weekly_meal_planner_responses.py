@@ -49,6 +49,20 @@ class WeeklyMealSlotResponse(BaseModel):
     planned_rice_grams: int = 0
 
 
+class WeeklyDaySummaryResponse(BaseModel):
+    """What a planned day adds up to, and what it still leaves on the table."""
+
+    day_index: int
+    # Calories the planned meals come to, at their planned portions and rice.
+    planned_calories: int
+    # The day's target, when the plan was generated with one.
+    target_calories: int | None = None
+    # Calories still short of the target, rounded to the nearest 10 and only
+    # when the gap is worth eating. Null when the day is on target or over,
+    # so a client can show "an them bua phu" on exactly these days.
+    snack_calories: int | None = None
+
+
 class WeeklyMealPlanResponse(BaseModel):
     id: str
     week_start_date: date
@@ -57,6 +71,8 @@ class WeeklyMealPlanResponse(BaseModel):
     people: int
     preferences: dict
     plan: list[list[WeeklyMealSlotResponse]]
+    # One entry per day, in day order.
+    days: list[WeeklyDaySummaryResponse] = Field(default_factory=list)
     total_meals_planned: int
     to_buy_count: int | None = None
     # How the week was selected: "v2", or "v3-compact" when each dinner is

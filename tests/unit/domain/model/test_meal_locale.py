@@ -1,6 +1,6 @@
 """The planner's serving rules are regional, not universal."""
 
-from src.domain.services.weekly_meal_planner.meal_locale import (
+from src.domain.model.weekly_meal_planner.meal_locale import (
     DEFAULT_LOCALE,
     VIETNAM,
     MealLocale,
