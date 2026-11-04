@@ -36,6 +36,8 @@ def _profile(date_of_birth: date | None) -> SimpleNamespace:
         updated_at=datetime(2026, 11, 1, tzinfo=UTC),
         weight_loss_kg_per_week=None,
         dietary_preferences=[],
+        allergies=[],
+        health_conditions=[],
         pace_clinician_disclaimer=False,
         profile_target_revision=4,
     )
