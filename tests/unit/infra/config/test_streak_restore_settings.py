@@ -13,6 +13,12 @@ def test_same_day_rule_is_off_when_unset_or_blank():
     assert blank.STREAK_SAME_DAY_LOGS_FROM is None
 
 
+def test_restore_spend_and_claim_default_off():
+    settings = Settings(_env_file=None)
+    assert settings.STREAK_RESTORE_SPEND_ENABLED is False
+    assert settings.STREAK_RESTORE_CLAIM_ENABLED is False
+
+
 @pytest.fixture
 def policy_from():
     def build(**values):
@@ -27,11 +33,18 @@ def policy_from():
     get_streak_restore_policy.cache_clear()
 
 
+def test_policy_defaults_spend_and_claim_off(policy_from):
+    policy = policy_from()
+    assert policy.spend_enabled is False
+    assert policy.claim_enabled is False
+
+
 def test_policy_reads_switches_and_the_sandbox_allow_list(policy_from):
     policy = policy_from(
         ENVIRONMENT="production",
         STREAK_RESTORE_SANDBOX_USER_IDS=" review-user, qa-user ,,",
         STREAK_RESTORE_SPEND_ENABLED=False,
+        STREAK_RESTORE_CLAIM_ENABLED=True,
         STREAK_SAME_DAY_LOGS_FROM="2026-11-10",
     )
     assert policy.production is True
