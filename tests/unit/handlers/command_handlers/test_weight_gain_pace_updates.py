@@ -104,6 +104,18 @@ async def test_my_plan_does_not_save_a_gain_pace_while_pregnant():
     assert profile.weight_loss_pace_reset_on is None
 
 
+@pytest.mark.asyncio
+async def test_my_plan_checks_a_gain_pace_against_a_condition_sent_with_it():
+    profile = _profile(gender="female")
+
+    await _update(
+        profile, health_conditions=["breastfeeding"], weight_gain_kg_per_week=0.5
+    )
+
+    assert profile.health_conditions == ["breastfeeding"]
+    assert profile.weight_gain_kg_per_week is None
+
+
 def _onboarding_profile() -> SimpleNamespace:
     return SimpleNamespace(
         age=30,

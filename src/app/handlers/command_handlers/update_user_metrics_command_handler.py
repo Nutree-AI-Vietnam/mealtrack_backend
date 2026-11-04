@@ -353,6 +353,13 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                     raise ValidationException("Daily water goal must be greater than 0")
                 profile.daily_water_goal_ml = command.daily_water_goal_ml
 
+            # Before the paces: a condition reported in this same update
+            # decides whether a pace may be saved.
+            if command.health_conditions is not None:
+                profile.health_conditions = _checked_conditions(
+                    command.health_conditions
+                )
+
             if command.weight_loss_kg_per_week is not None:
                 # Capped where the target would drop below the floor, using the
                 # metrics this same update just set.
@@ -391,11 +398,6 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
 
             if command.dietary_preferences is not None:
                 profile.dietary_preferences = _clean_diets(command.dietary_preferences)
-
-            if command.health_conditions is not None:
-                profile.health_conditions = _checked_conditions(
-                    command.health_conditions
-                )
 
             if command.allergies is not None:
                 profile.allergies = await _checked_allergies(uow, command.allergies)
