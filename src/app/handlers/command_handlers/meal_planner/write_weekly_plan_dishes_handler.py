@@ -21,6 +21,7 @@ from src.domain.model.weekly_meal_planner.weekly_meal_plan import (
 from src.domain.services.prompts.prompt_template_manager import PromptTemplateManager
 from src.domain.services.weekly_meal_planner.ai_dish import (
     DishRequest,
+    PricingUnavailable,
     generate_week_of_dishes,
 )
 
@@ -54,16 +55,27 @@ class WriteWeeklyPlanDishesCommandHandler(EventHandler):
             reference = await _reference_dishes(uow)
             memory_text = await _memory_text(uow, command)
 
-        week = await generate_week_of_dishes(
-            _requests(command),
-            ask=self._ask,
-            price=self._price if self._nutrition is not None else None,
-            build_names_prompt=PromptTemplateManager.build_discovery_prompt,
-            build_recipe_prompt=PromptTemplateManager.build_recipe_details_prompt,
-            reference_dishes=reference,
-            memory_text=memory_text,
-            language=command.language,
-        )
+        try:
+            week = await generate_week_of_dishes(
+                _requests(command),
+                ask=self._ask,
+                price=self._price if self._nutrition is not None else None,
+                build_names_prompt=PromptTemplateManager.build_discovery_prompt,
+                build_recipe_prompt=PromptTemplateManager.build_recipe_details_prompt,
+                reference_dishes=reference,
+                memory_text=memory_text,
+                language=command.language,
+            )
+        except PricingUnavailable as exc:
+            # Our own pricing is down, not the model's dishes. Say which,
+            # so the job's failure reads as an outage rather than a week
+            # nobody could write, and so a retry waits for the tiers.
+            logger.error(
+                "Weekly plan %s could not be priced; every nutrition tier failed on %s",
+                command.plan_id,
+                exc,
+            )
+            raise RuntimeError("WEEKLY_PLAN_PRICING_UNAVAILABLE") from exc
 
         if not week.dishes:
             logger.error(
