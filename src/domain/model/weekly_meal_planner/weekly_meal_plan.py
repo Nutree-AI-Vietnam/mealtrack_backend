@@ -50,6 +50,10 @@ def meal_type_for_slot(slot_index: int) -> str:
 
 
 class WeeklyMealPlanStatus(StrEnum):
+    # A model is still writing the week's dishes; the plan has no slots to
+    # show yet. Only a plan generated in the background is ever in this
+    # state, and it leaves it for DRAFT or is deleted.
+    PREPARING = "preparing"
     DRAFT = "draft"
     CONFIRMED = "confirmed"
 
