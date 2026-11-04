@@ -297,3 +297,81 @@ class TestTheJobIdFitsItsColumn:
         queued = harness.jobs.started[0]["job_id"]
         assert len(queued) <= AiJobORM.__table__.c.id.type.length
         assert queued == route.weekly_plan_job_id(self.PLAN_ID)
+
+
+class TestAWeekWaitingWithNobodyComing:
+    """A plan in 'preparing' whose job was never queued must not sit there.
+
+    _prepared_plan_response says the next request queues it again. It did
+    not: the job is only queued where a plan is created, and a plan that
+    already exists never reaches that branch. Staging's first real week
+    sat in 'preparing' through every refresh.
+    """
+
+    PLAN_ID = "bd143a63-5a5a-4054-ba4b-6315fecb2943"
+
+    @pytest.fixture
+    def waiting(self, monkeypatch):
+        seen = SimpleNamespace(queued=[], looked_up=[])
+
+        class _Jobs:
+            async def get(self, *, user_id, job_id):
+                seen.looked_up.append(job_id)
+                if seen.queued:
+                    return SimpleNamespace(id=job_id)
+                raise RuntimeError("no such job")
+
+            async def start_weekly_plan_job(self, **kwargs):
+                seen.queued.append(kwargs)
+                return SimpleNamespace(id=kwargs["job_id"]), True
+
+        async def budget(event_bus, query):
+            return {"adjusted_daily_calories": 2311, "daily_protein": 126.0}
+
+        monkeypatch.setattr(route, "get_ai_job_service", lambda: _Jobs())
+        monkeypatch.setattr(route, "_weekly_budget", budget)
+        monkeypatch.setattr(route, "get_request_language", lambda request: "vi")
+        return seen
+
+    async def _call(self, waiting):
+        return await route._ensure_the_week_is_being_written(
+            SimpleNamespace(),
+            event_bus=SimpleNamespace(),
+            user_id="user-1",
+            plan=SimpleNamespace(id=self.PLAN_ID),
+            week=date(2026, 11, 2),
+            timezone="Asia/Ho_Chi_Minh",
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_week_with_no_job_gets_one(self, waiting):
+        await self._call(waiting)
+
+        assert len(waiting.queued) == 1
+        job = waiting.queued[0]
+        assert job["job_id"] == route.weekly_plan_job_id(self.PLAN_ID)
+        assert job["request"]["plan_id"] == self.PLAN_ID
+        assert job["request"]["daily_calories"] == 2311
+        assert job["request"]["daily_protein"] == 126.0
+
+    @pytest.mark.asyncio
+    async def test_a_week_already_being_written_is_left_alone(self, waiting):
+        """The app polls this every few seconds; it must stay cheap."""
+        await self._call(waiting)
+        await self._call(waiting)
+
+        assert len(waiting.queued) == 1
+        assert len(waiting.looked_up) == 2
+
+    @pytest.mark.asyncio
+    async def test_a_budget_that_fails_is_never_the_user_s_problem(
+        self, waiting, monkeypatch
+    ):
+        async def boom(event_bus, query):
+            raise RuntimeError("the budget service is down")
+
+        monkeypatch.setattr(route, "_weekly_budget", boom)
+
+        await self._call(waiting)
+
+        assert waiting.queued == []
