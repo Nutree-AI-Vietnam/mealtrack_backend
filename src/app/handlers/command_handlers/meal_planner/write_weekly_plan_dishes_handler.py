@@ -5,6 +5,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from src.app.commands.meal_planner.prepare_weekly_meal_plan_command import (
+    PrepareWeeklyMealPlanCommand,
+)
 from src.app.commands.meal_planner.write_weekly_plan_dishes_command import (
     WriteWeeklyPlanDishesCommand,
 )
@@ -141,3 +144,33 @@ async def _memory_text(uow, command: WriteWeeklyPlanDishesCommand) -> str:
         logger.warning("Could not read the food memory for the planner prompt")
         return ""
     return memory.prompt_text()
+
+
+@handles(PrepareWeeklyMealPlanCommand)
+class PrepareWeeklyMealPlanCommandHandler(EventHandler):
+    """Open the week with no dishes, for a job to write into.
+
+    An existing plan is returned untouched, whichever state it is in: a
+    second tab asking for the same week must not start a second write.
+    """
+
+    def __init__(self, uow_factory: Any):
+        self._uow_factory = uow_factory
+
+    async def handle(self, command: PrepareWeeklyMealPlanCommand):
+        async with self._uow_factory() as uow:
+            current = await uow.weekly_meal_plans.get_current(
+                user_id=command.user_id, week_start_date=command.week_start_date
+            )
+            if current is not None:
+                return current
+            plan = await uow.weekly_meal_plans.create(
+                user_id=command.user_id,
+                week_start_date=command.week_start_date,
+                timezone=command.timezone,
+                preferences=command.preferences,
+                status=WeeklyMealPlanStatus.PREPARING.value,
+                daily_calories=command.daily_calories,
+            )
+            await uow.commit()
+            return plan

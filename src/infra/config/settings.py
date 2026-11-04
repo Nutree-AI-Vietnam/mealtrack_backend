@@ -320,6 +320,13 @@ class Settings(BaseSettings):
         default=False,
         description="Run AI job worker lanes and the push notifier in this process.",
     )
+    # The weekly plan's dishes come from a model instead of the crawled
+    # catalogue. Off until the app can show a week that is still being
+    # written; needs AI_JOBS_ENABLED and a worker to be any use.
+    WEEKLY_PLAN_AI_DISHES_ENABLED: bool = Field(
+        default=False,
+        description="Write weekly plan dishes with a model, in a background job.",
+    )
     AI_JOBS_WORKER_CONCURRENCY: int = Field(default=2, ge=1, le=16)
     AI_JOBS_GLOBAL_CAPACITY: int = Field(default=4, ge=1, le=64)
     AI_JOBS_LEASE_SECONDS: int = Field(default=120, ge=30, le=3600)

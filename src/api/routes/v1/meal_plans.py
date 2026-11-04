@@ -24,6 +24,7 @@ from src.api.base_dependencies import (
     get_async_food_reference_repository,
     get_planner_translation_service,
 )
+from src.api.dependencies.ai_jobs import get_ai_job_service
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
 from src.api.exceptions import create_http_exception, handle_exception
@@ -71,6 +72,7 @@ from src.app.commands.meal_planner import (
     GenerateWeeklyMealPlanCommand,
     LinkMealPlanSlotCommand,
     LogMealPlanSlotCommand,
+    PrepareWeeklyMealPlanCommand,
     SetMealPlanSlotSkipCommand,
     UnlogMealPlanSlotCommand,
     UpdateGroceryDayLinesCommand,
@@ -106,6 +108,7 @@ from src.domain.model.weekly_meal_planner import (
     RICE_STEP_MACROS,
     SavedRecipeSnapshot,
     WeeklyMealPlanPreferences,
+    WeeklyMealPlanStatus,
     meal_type_for_slot,
 )
 from src.domain.services.nrf_score import nrf_coverage, nrf_quality
@@ -117,6 +120,7 @@ from src.domain.utils.timezone_utils import (
     is_valid_timezone,
     normalize_timezone,
 )
+from src.infra.config.settings import get_settings
 from src.planner_observability import planner_timed
 from src.planner_request_policy import planner_deadline, timeout_until
 
@@ -133,6 +137,71 @@ WEEKLY_PLAN_FEATURES: tuple[str, ...] = (
     "recipe_batch",
     "saved_recipe_slots",
 )
+# Advertised only while the dishes come from a model: a client that does
+# not see it will never be handed a plan in 'preparing'.
+PLAN_PREPARING_FEATURE = "plan_preparing"
+
+
+def _plan_features() -> list[str]:
+    features = list(WEEKLY_PLAN_FEATURES)
+    if get_settings().WEEKLY_PLAN_AI_DISHES_ENABLED:
+        features.append(PLAN_PREPARING_FEATURE)
+    return features
+
+
+async def _prepared_plan_response(
+    request: Request,
+    *,
+    event_bus,
+    user_id: str,
+    week: date,
+    timezone: str,
+    preferences: WeeklyMealPlanPreferences,
+    daily_calories: int,
+    budget: dict | None,
+    translation_service,
+    include_grocery_count: bool,
+):
+    """Open the week and let a background job write its dishes.
+
+    The plan row is created first so the planner has a week to show while
+    the job runs. A job that cannot be queued leaves the plan in
+    'preparing'; the next request queues it again, because the job id is
+    derived from the plan and the request, not minted fresh.
+    """
+    plan = await event_bus.send(
+        PrepareWeeklyMealPlanCommand(
+            user_id=user_id,
+            week_start_date=week,
+            timezone=timezone,
+            preferences=preferences,
+            daily_calories=daily_calories,
+        )
+    )
+    if plan.status.value == WeeklyMealPlanStatus.PREPARING.value:
+        try:
+            await get_ai_job_service().start_weekly_plan_job(
+                job_id=f"weekly-plan-{plan.id}",
+                user_id=user_id,
+                language=get_request_language(request),
+                request={
+                    "plan_id": plan.id,
+                    "week_start_date": week.isoformat(),
+                    "daily_calories": daily_calories,
+                    "timezone": timezone,
+                    **_macro_targets(budget),
+                },
+            )
+        except Exception:  # noqa: BLE001 - the week is still shown, empty
+            logger.exception("Could not queue the write of plan %s", plan.id)
+    return await _plan_response(
+        plan,
+        event_bus,
+        language=get_request_language(request),
+        translation_service=translation_service,
+        include_grocery_count=include_grocery_count,
+        localization_timeout_seconds=1.5,
+    )
 
 
 @router.get("/v1/meal-plans/current", response_model=WeeklyMealPlanResponse)
@@ -176,6 +245,19 @@ async def get_current_weekly_plan(
             if daily_calories <= 0:
                 daily_calories = 2000
             preferences = WeeklyMealPlanPreferences(people=1)
+            if get_settings().WEEKLY_PLAN_AI_DISHES_ENABLED:
+                return await _prepared_plan_response(
+                    request,
+                    event_bus=event_bus,
+                    user_id=user_id,
+                    week=week,
+                    timezone=timezone,
+                    preferences=preferences,
+                    daily_calories=daily_calories,
+                    budget=budget,
+                    translation_service=translation_service,
+                    include_grocery_count=include_grocery_count,
+                )
             plan = await event_bus.send(
                 GenerateWeeklyMealPlanCommand(
                     user_id=user_id,
@@ -1058,7 +1140,7 @@ async def _plan_response(
         algorithm_version=getattr(plan, "algorithm_version", None),
         created_at=plan.created_at,
         updated_at=plan.updated_at,
-        features=list(WEEKLY_PLAN_FEATURES),
+        features=_plan_features(),
     )
 
 
