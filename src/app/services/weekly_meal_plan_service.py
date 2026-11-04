@@ -1326,7 +1326,11 @@ async def _user_food_memory(
             logger.warning("Could not read ingredient history for the planner")
             buckets = []
         if buckets:
-            weights = dict(IngredientAffinityService().build_profile(buckets).weights)
+            # build_profile reads a list of events and needs a clock;
+            # build_profile_from_buckets is the one that takes what
+            # aggregate_linked_ingredient_history returns, ages included.
+            profile = IngredientAffinityService().build_profile_from_buckets(buckets)
+            weights = dict(profile.weights)
 
     shapes: list[LoggedMealShape] = []
     recent = getattr(meals_repo, "recent_logged_meal_shapes", None)
