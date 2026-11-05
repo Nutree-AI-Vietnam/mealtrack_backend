@@ -1,21 +1,24 @@
 name: Preprod
 
 # Temporary production clone of nutree_backend (Render image preview).
-# Copies production env, then overrides what a clone on production's
-# database must not do (see "Apply preprod overrides"). Only needs
-# RENDER_API_KEY. Manual only — does not run on push/merge to main.
+# create: builds or picks an image and makes a new clone. It copies
+#   production env, then overrides what a clone on production's database
+#   must not do (see "Apply preprod overrides").
+# deploy: runs another image on the clone that exists, keeping its env.
+# delete: removes the clone.
+# Only needs RENDER_API_KEY. Manual only — does not run on push/merge to main.
 
 on:
   workflow_dispatch:
     inputs:
       action:
-        description: create or delete
+        description: create, deploy or delete
         required: true
         type: choice
-        options: [create, delete]
+        options: [create, deploy, delete]
         default: create
       image_tag:
-        description: Existing GHCR tag (empty = build this SHA)
+        description: Existing GHCR tag (create - empty = build this SHA; deploy - empty = main)
         required: false
         type: string
 
@@ -162,6 +165,40 @@ jobs:
             "$RENDER_API/services/$SERVICE_ID/deploys")"
           test "$code" -ge 200 -a "$code" -lt 300 || { echo "::error::$(cat /tmp/deploy.json)"; exit 1; }
           echo "Redeploying with preprod overrides"
+
+  deploy:
+    name: Deploy an image to preprod
+    if: inputs.action == 'deploy'
+    runs-on: ubuntu-latest
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      TAG: ${{ inputs.image_tag }}
+    steps:
+      - name: Deploy
+        run: |
+          set -euo pipefail
+          test -n "$RENDER_API_KEY" || { echo "::error::Set secret RENDER_API_KEY"; exit 1; }
+          image="$REGISTRY/$IMAGE_NAME:${TAG:-main}"
+          encoded="$(python3 -c 'import urllib.parse,os; print(urllib.parse.quote(os.environ["NAME"]))')"
+          curl -sS -o /tmp/list.json -H "Authorization: Bearer $RENDER_API_KEY" \
+            "$RENDER_API/services?includePreviews=true&limit=50&name=$encoded"
+          id="$(python3 -c '
+          import json, os
+          name = os.environ["NAME"]
+          rows = json.load(open("/tmp/list.json"))
+          rows = rows if isinstance(rows, list) else rows.get("data", [])
+          for row in rows:
+              s = row.get("service", row)
+              if s.get("name") == name:
+                  print(s["id"]); break
+          ')"
+          test -n "$id" || { echo "::error::No $NAME service; run create first"; exit 1; }
+          payload="$(IMAGE="$image" python3 -c 'import json,os; print(json.dumps({"imageUrl": os.environ["IMAGE"]}))')"
+          code="$(curl -sS -o /tmp/deploy.json -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer $RENDER_API_KEY" -H "Content-Type: application/json" \
+            -d "$payload" "$RENDER_API/services/$id/deploys")"
+          test "$code" -ge 200 -a "$code" -lt 300 || { echo "::error::$(cat /tmp/deploy.json)"; exit 1; }
+          echo "Deploying $image to $id"
 
   delete:
     name: Delete preprod
