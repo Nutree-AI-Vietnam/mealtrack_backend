@@ -96,6 +96,23 @@ class TestReadingWhatTheModelWrote:
         assert snapshot.steps[0].instruction.startswith("Boil the noodles")
         assert snapshot.steps[0].duration_minutes is None
 
+    def test_the_english_working_name_is_kept_for_the_photo(self):
+        """The reader's name can drift: this "rice roll" was a tortilla wrap."""
+        snapshot = snapshot_from_ai_recipe(
+            _payload(name="Chicken Avocado Egg Wrap", local_name="Bánh cuốn bơ trứng"),
+            dish_id="ai-1",
+            language="vi",
+        )
+
+        assert snapshot.name == "Bánh cuốn bơ trứng"
+        assert snapshot.english_name == "Chicken Avocado Egg Wrap"
+
+    def test_a_dish_written_in_english_has_no_second_name(self):
+        snapshot = snapshot_from_ai_recipe(_payload(), dish_id="ai-1")
+
+        assert snapshot.name == "Lemongrass Tofu Rice Bowl"
+        assert snapshot.english_name is None
+
     def test_an_unreadable_answer_is_not_half_stored(self):
         assert snapshot_from_ai_recipe({}, dish_id="ai-1") is None
         assert snapshot_from_ai_recipe({"name": "Soup"}, dish_id="ai-1") is None

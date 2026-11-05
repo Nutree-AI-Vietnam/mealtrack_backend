@@ -124,6 +124,11 @@ class SavedRecipeSnapshot:
     source: str = SOURCE_SUGGESTION
     source_url: str | None = None
     servings_estimated: bool = False
+    # The English working name of a dish a model wrote in the reader's own
+    # language. Nobody is shown it. The dish's photo is drawn from it,
+    # because the reader's name can drift from what was cooked: one week's
+    # "Bánh cuốn bơ trứng" was a tortilla wrap, not a rice roll.
+    english_name: str | None = None
 
     @property
     def calories(self) -> int:
@@ -227,6 +232,7 @@ class SavedRecipeSnapshot:
             source=str(data.get("source") or SOURCE_SUGGESTION),
             source_url=_url(data.get("source_url")),
             servings_estimated=bool(data.get("servings_estimated")),
+            english_name=_text(data.get("english_name"), _MAX_NAME_CHARS),
             protein=_grams(macros.get("protein")) or 0.0,
             carbs=_grams(macros.get("carbs")) or 0.0,
             fat=_grams(macros.get("fat")) or 0.0,
@@ -259,6 +265,7 @@ class SavedRecipeSnapshot:
             "source": self.source,
             "source_url": self.source_url,
             "servings_estimated": self.servings_estimated,
+            "english_name": self.english_name,
         }
 
 

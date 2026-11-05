@@ -122,6 +122,20 @@ def test_snapshot_round_trips_through_stored_json():
     assert SavedRecipeSnapshot.from_dict(None, suggestion_id="x").suggestion_id == "x"
 
 
+def test_an_ai_dish_keeps_its_english_name_through_storage():
+    """Its photo is drawn from it; a row stored before it existed still reads."""
+    snapshot = SavedRecipeSnapshot(
+        suggestion_id="ai_1",
+        name="Bánh cuốn bơ trứng",
+        english_name="Chicken Avocado Egg Wrap",
+    )
+    stored = snapshot.to_dict()
+
+    assert SavedRecipeSnapshot.from_dict(stored) == snapshot
+    stored.pop("english_name")
+    assert SavedRecipeSnapshot.from_dict(stored).english_name is None
+
+
 def test_ai_meal_idea_is_one_serving_with_prep_time_as_total():
     snapshot = SavedRecipeSnapshot.from_saved_suggestion(
         "sugg-7",

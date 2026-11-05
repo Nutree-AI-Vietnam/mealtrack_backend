@@ -12,6 +12,7 @@ from src.app.commands.meal_planner.write_weekly_plan_dishes_command import (
     WriteWeeklyPlanDishesCommand,
 )
 from src.app.events.base import EventHandler, handles
+from src.app.services.planner_dish_photos import Photographer, PlannerDishPhotos
 from src.domain.model.weekly_meal_planner.meal_locale import locale_for_timezone
 from src.domain.model.weekly_meal_planner.weekly_meal_plan import (
     SLOT_MEAL_TYPES,
@@ -41,20 +42,31 @@ class WriteWeeklyPlanDishesCommandHandler(EventHandler):
     planner while this runs sees a week being written rather than nothing.
     It leaves 'preparing' only when at least one dish was stored; a week
     nobody could write stays as it is and the job reports the failure.
+    Each dish carries a photo when one was ready in time; one that was not
+    leaves the empty plate, never the week.
     """
 
     def __init__(
-        self, uow_factory: Any, generation_service: Any, nutrition_lookup: Any = None
+        self,
+        uow_factory: Any,
+        generation_service: Any,
+        nutrition_lookup: Any = None,
+        photographer: Photographer | None = None,
     ):
         self._uow_factory = uow_factory
         self._generation = generation_service
         self._nutrition = nutrition_lookup
+        # Draws a dish's photo; None leaves every dish on the empty plate.
+        self._photographer = photographer
 
     async def handle(self, command: WriteWeeklyPlanDishesCommand) -> dict[str, Any]:
         async with self._uow_factory() as uow:
             reference = await _reference_dishes(uow)
             memory_text = await _memory_text(uow, command)
 
+        # Each dish's photo starts as its slot keeps it, while the rest of
+        # the week is still being written.
+        photos = PlannerDishPhotos(self._photographer, plan_id=command.plan_id)
         try:
             week = await generate_week_of_dishes(
                 _requests(command),
@@ -65,8 +77,10 @@ class WriteWeeklyPlanDishesCommandHandler(EventHandler):
                 reference_dishes=reference,
                 memory_text=memory_text,
                 language=command.language,
+                on_dish=photos.start,
             )
         except PricingUnavailable as exc:
+            photos.cancel()
             # Our own pricing is down, not the model's dishes. Say which,
             # so the job's failure reads as an outage rather than a week
             # nobody could write, and so a retry waits for the tiers.
@@ -76,8 +90,13 @@ class WriteWeeklyPlanDishesCommandHandler(EventHandler):
                 exc,
             )
             raise RuntimeError("WEEKLY_PLAN_PRICING_UNAVAILABLE") from exc
+        except BaseException:
+            # A week that failed or was stopped leaves no photo running.
+            photos.cancel()
+            raise
 
         if not week.dishes:
+            photos.cancel()
             logger.error(
                 "No dish could be written for plan %s: %s",
                 command.plan_id,
@@ -85,11 +104,13 @@ class WriteWeeklyPlanDishesCommandHandler(EventHandler):
             )
             raise RuntimeError("WEEKLY_PLAN_NO_DISHES")
 
+        dishes = await photos.attach(week.dishes)
+
         async with self._uow_factory() as uow:
             await uow.weekly_meal_plans.update(
                 user_id=command.user_id,
                 plan_id=command.plan_id,
-                saved_slots=week.dishes,
+                saved_slots=dishes,
                 status=WeeklyMealPlanStatus.DRAFT.value,
             )
             await uow.commit()
