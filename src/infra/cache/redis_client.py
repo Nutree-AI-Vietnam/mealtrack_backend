@@ -39,19 +39,26 @@ class RedisClient:
         max_connections: int = 50,
         socket_timeout: float = 5.0,
         socket_connect_timeout: float = 5.0,
+        pool_timeout: float = 1.0,
     ):
         self._redis_url = redis_url
         self._max_connections = max_connections
         self._socket_timeout = socket_timeout
         self._socket_connect_timeout = socket_connect_timeout
+        self._pool_timeout = pool_timeout
         self._loop_id: Optional[int] = None
         self.pool = self._create_pool()
         self.client: Optional[redis.Redis] = None
 
-    def _create_pool(self) -> redis.ConnectionPool:
-        return redis.ConnectionPool.from_url(
+    def _create_pool(self) -> redis.BlockingConnectionPool:
+        # When every connection is busy, a command waits up to pool_timeout for
+        # one to free up. The non-blocking pool raised "Too many connections" at
+        # once, so a burst of background events dropped cache work and made
+        # request reads fall back to SQL.
+        return redis.BlockingConnectionPool.from_url(
             self._redis_url,
             max_connections=self._max_connections,
+            timeout=self._pool_timeout,
             decode_responses=True,
             socket_timeout=self._socket_timeout,
             socket_connect_timeout=self._socket_connect_timeout,

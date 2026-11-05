@@ -76,7 +76,8 @@ Mutations (Meal, Hydration, Movement, User Profile/Settings, Cheat Day, Saved Su
 1. Handlers commit their authoritative database transaction, then publish one versioned `IntegrationEvent` envelope through `BestEffortIntegrationEventPublisher`, which runs it on a background task. A failure is logged and never fails the write.
 2. `InProcessIntegrationEventRouter` (`src/app/events/in_process_event_router.py`) runs every handler registered for the event type; a failing handler does not skip the others. `src/api/services/in_process_integration_events.py` registers them at startup.
 3. Meal events generate meal value insights. Account deletion events delete the Firebase account: three attempts, then the UID is logged at ERROR for `scripts/delete_missed_firebase_accounts.py`. Profile, cheat-day and saved-suggestion events purge their caches. Meal, hydration and movement day caches are purged on the write path before the response, so those events need nothing more.
-4. Shutdown drains in-flight handlers for up to 5 s; work still running after that is dropped.
+4. Each worker runs at most 32 meal insights, 2 cache purges and 2 Firebase deletions at once; further events wait their turn. The Redis pool waits up to `REDIS_POOL_TIMEOUT` (1 s) for a free connection instead of failing at once.
+5. Shutdown drains in-flight handlers for up to 5 s; work still running after that is dropped.
 
 These handlers replaced the Cloudflare Queue and the `nutreeai_async` worker:
 [`decisions/261105-0248-retire-nutreeai-async.md`](decisions/261105-0248-retire-nutreeai-async.md).

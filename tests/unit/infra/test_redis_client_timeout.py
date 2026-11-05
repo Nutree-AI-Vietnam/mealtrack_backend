@@ -1,16 +1,17 @@
-"""Unit test: RedisClient ConnectionPool must include socket timeouts."""
+"""Unit test: the RedisClient pool must wait for connections and time out sockets."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from redis.asyncio import BlockingConnectionPool
 
 from src.infra.cache.redis_client import RedisClient
 
 
 def test_connection_pool_has_socket_timeout():
-    """ConnectionPool.from_url must be called with socket_timeout."""
+    """BlockingConnectionPool.from_url must be called with socket_timeout."""
     with patch(
-        "src.infra.cache.redis_client.redis.ConnectionPool.from_url"
+        "src.infra.cache.redis_client.redis.BlockingConnectionPool.from_url"
     ) as mock_from_url:
         mock_from_url.return_value = MagicMock()
         RedisClient(redis_url="redis://localhost:6379")
@@ -26,7 +27,7 @@ def test_connection_pool_has_socket_timeout():
 def test_connection_pool_timeout_is_reasonable():
     """socket_timeout should be <= 10 seconds to avoid blocking too long."""
     with patch(
-        "src.infra.cache.redis_client.redis.ConnectionPool.from_url"
+        "src.infra.cache.redis_client.redis.BlockingConnectionPool.from_url"
     ) as mock_from_url:
         mock_from_url.return_value = MagicMock()
         RedisClient(redis_url="redis://localhost:6379")
@@ -38,7 +39,7 @@ def test_connection_pool_timeout_is_reasonable():
 def test_connection_pool_timeout_custom_value():
     """Custom timeout values must be forwarded to the pool."""
     with patch(
-        "src.infra.cache.redis_client.redis.ConnectionPool.from_url"
+        "src.infra.cache.redis_client.redis.BlockingConnectionPool.from_url"
     ) as mock_from_url:
         mock_from_url.return_value = MagicMock()
         RedisClient(
@@ -49,6 +50,22 @@ def test_connection_pool_timeout_custom_value():
         call_kwargs = mock_from_url.call_args[1]
         assert call_kwargs["socket_timeout"] == 1.5
         assert call_kwargs["socket_connect_timeout"] == 2.5
+
+
+def test_full_pool_waits_for_a_free_connection_instead_of_failing():
+    """A burst past max_connections queues for a connection for pool_timeout.
+
+    The non-blocking pool raised "Too many connections" at once, which dropped
+    background cache work and turned request reads into SQL fallbacks.
+    """
+    client = RedisClient(redis_url="redis://localhost:6379", max_connections=10)
+
+    assert isinstance(client.pool, BlockingConnectionPool)
+    assert client.pool.max_connections == 10
+    assert client.pool.timeout == 1.0
+
+    tuned = RedisClient(redis_url="redis://localhost:6379", pool_timeout=0.25)
+    assert tuned.pool.timeout == 0.25
 
 
 @pytest.mark.asyncio
@@ -66,7 +83,7 @@ async def test_get_reconnects_when_cached_client_belongs_to_old_loop():
 
     with (
         patch(
-            "src.infra.cache.redis_client.redis.ConnectionPool.from_url",
+            "src.infra.cache.redis_client.redis.BlockingConnectionPool.from_url",
             return_value=new_pool,
         ),
         patch("src.infra.cache.redis_client.redis.Redis", return_value=new_client),

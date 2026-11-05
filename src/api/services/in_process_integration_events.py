@@ -11,10 +11,15 @@ These handlers replaced the retired nutreeai_async worker and Cloudflare Queue:
 Meal, hydration and movement day caches are purged on the write path before
 the response, so those events need nothing more here. Subscription receipts
 and meal recommendation plans had no reader and are not carried over.
+
+Each worker caps how much of this work runs at once. Past a cap, events wait
+their turn in memory instead of competing with requests for the worker's
+Redis pool and for the Firebase threads that verify sign-in tokens.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import date
@@ -28,10 +33,18 @@ from src.api.services.write_cache_invalidation import (
 )
 from src.app.events.in_process_event_router import (
     InProcessIntegrationEventRouter,
+    IntegrationEventHandler,
     in_process_event_router,
 )
 
 logger = logging.getLogger(__name__)
+
+# Per-worker caps. Insights mostly wait on the AI provider, so they get room;
+# pattern purges each make dozens of SCAN round trips on a 10-connection pool;
+# Firebase deletions share the 8 token-verification threads.
+MEAL_INSIGHT_CONCURRENCY = 32
+CACHE_PURGE_CONCURRENCY = 2
+ACCOUNT_CLEANUP_CONCURRENCY = 2
 
 MEAL_EVENTS = ("meal.created.v1", "meal.updated.v1", "meal.deleted.v1")
 ACCOUNT_CLEANUP_EVENTS = ("user.deleted.v1", "user.account_cleanup.v1")
@@ -56,7 +69,14 @@ def register_in_process_event_handlers(
 ) -> None:
     """Replace the router's handlers with this process's own."""
     router.clear()
-    router.register(MEAL_EVENTS, MealInsightEventHandler(cache_getter, ai_getter))
+    purge_gate = asyncio.Semaphore(CACHE_PURGE_CONCURRENCY)
+    router.register(
+        MEAL_EVENTS,
+        LimitedHandler(
+            MealInsightEventHandler(cache_getter, ai_getter),
+            asyncio.Semaphore(MEAL_INSIGHT_CONCURRENCY),
+        ),
+    )
 
     async def delete_account(payload: dict[str, Any]) -> None:
         firebase_uid = _data(payload).get("firebase_uid")
@@ -86,10 +106,31 @@ def register_in_process_event_handlers(
             cache_getter(), str(_data(payload).get("user_id") or "")
         )
 
-    router.register(ACCOUNT_CLEANUP_EVENTS, delete_account)
-    router.register(PROFILE_EVENTS, purge_profile)
-    router.register(CHEAT_DAY_EVENTS, purge_cheat_day)
-    router.register(SAVED_SUGGESTION_EVENTS, purge_saved_suggestions)
+    router.register(
+        ACCOUNT_CLEANUP_EVENTS,
+        LimitedHandler(delete_account, asyncio.Semaphore(ACCOUNT_CLEANUP_CONCURRENCY)),
+    )
+    router.register(PROFILE_EVENTS, LimitedHandler(purge_profile, purge_gate))
+    router.register(CHEAT_DAY_EVENTS, LimitedHandler(purge_cheat_day, purge_gate))
+    router.register(
+        SAVED_SUGGESTION_EVENTS, LimitedHandler(purge_saved_suggestions, purge_gate)
+    )
+
+
+class LimitedHandler:
+    """Run a handler only while a slot of its shared per-worker cap is free."""
+
+    def __init__(
+        self, handler: IntegrationEventHandler, gate: asyncio.Semaphore
+    ) -> None:
+        self.handler = handler
+        self.gate = gate
+        # The router names the failing handler in its log line.
+        self.__name__ = getattr(handler, "__name__", type(handler).__name__)
+
+    async def __call__(self, payload: dict[str, Any]) -> None:
+        async with self.gate:
+            await self.handler(payload)
 
 
 def _data(payload: dict[str, Any]) -> dict[str, Any]:

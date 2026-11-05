@@ -88,6 +88,7 @@ async def initialize_cache_layer() -> None:
         _redis_client = RedisClient(
             redis_url=settings.redis_url,
             max_connections=settings.REDIS_MAX_CONNECTIONS,
+            pool_timeout=settings.REDIS_POOL_TIMEOUT,
         )
         await _redis_client.connect()
 

@@ -118,7 +118,7 @@ stay stale after a profile change.
 **Diagnosis:** this work runs on background tasks in the API process
 (`src/api/services/in_process_integration_events.py`). Search the API logs:
 ```bash
-rg -n "in-process integration event handler failed|meal insight generated|Firebase account cleanup (completed|failed)|cache invalidation failed" app.log
+rg -n "in-process integration event handler failed|meal insight generated|Firebase account cleanup (completed|failed)|cache invalidation failed|No connection available" app.log
 ```
 
 **Solutions:**
@@ -133,6 +133,11 @@ rg -n "in-process integration event handler failed|meal insight generated|Fireba
    completed" log line.
 3. Stale profile caches: look for `profile cache invalidation failed`; the
    caches expire on their own TTL, and the next profile write purges again.
+4. `Redis ... error: No connection available.`: a command waited
+   `REDIS_POOL_TIMEOUT` for one of the worker's `REDIS_MAX_CONNECTIONS`
+   connections and the cache failed open. Look for a burst of events or a slow
+   Redis. Raise `REDIS_MAX_CONNECTIONS` only while connections × workers ×
+   instances stays under the Redis plan's limit (50 on the free Render plan).
 
 ---
 

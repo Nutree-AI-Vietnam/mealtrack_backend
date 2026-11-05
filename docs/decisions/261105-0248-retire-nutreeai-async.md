@@ -85,6 +85,33 @@ pool, three attempts with backoff; an account that is already gone counts as
 deleted. After the last failure the UID is logged at ERROR so
 `scripts/delete_missed_firebase_accounts.py` can finish it.
 
+### Load limits
+
+Each worker caps its own follow-up work
+(`src/api/services/in_process_integration_events.py`): at most 32 meal
+insights, 2 cache purges and 2 Firebase deletions run at once. Past a cap,
+events wait in memory, so a burst cannot take all of the worker's 10 Redis
+connections or the 8 Firebase threads that verify sign-in tokens.
+
+The Redis pool now waits up to `REDIS_POOL_TIMEOUT` (1 s) for a free
+connection. The previous pool raised `Too many connections` at once, so the
+cache failed open: insights were skipped, purges ran incomplete and request
+reads fell back to SQL.
+
+A local load test with one process standing in for one worker, a real Redis
+holding 5,000 keys, and a fake AI provider answering in 2–5 s:
+
+| Scenario | Previous pool, no caps | Waiting pool and caps |
+|---|---|---|
+| 20 meal events a second for 30 s | 600 of 600 insights, no errors | not needed |
+| 1,000 meal events at once | 10 of 1,000 insights, 991 Redis errors | 1,000 of 1,000 in 111 s, no errors |
+| 200 profile purges at once | 1,725 Redis errors, 15 of 106 request cache reads failed | done in 1.9 s, request reads p99 2.1 ms |
+
+The waiting pool alone stopped the errors but let the purge burst hold every
+connection: request cache reads reached 440 ms (p99). The purge cap removes
+that wait. Production peaked at 251 created resources an hour in the week to
+2026-11-05, so neither burst happens today.
+
 ## Rollout
 
 1. Merge and deploy `nutree_backend`. From that deploy on, the backend stops
@@ -113,7 +140,8 @@ Costs and risks:
 
 - Follow-up work shares the API process. CPU has ample room; memory is the
   constraint and already grows about 160 MB a day between deploys, a separate
-  issue worth fixing.
+  issue worth fixing. The per-worker caps keep a burst from taking the Redis
+  connections and Firebase threads that requests need.
 - Work still running at shutdown is dropped after the 5 s drain. A dropped
   insight is re-requested when the app reads it two minutes later; a dropped
   Firebase deletion is covered by the reconcile script.

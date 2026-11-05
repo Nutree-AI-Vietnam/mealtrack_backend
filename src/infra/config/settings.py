@@ -125,6 +125,14 @@ class Settings(BaseSettings):
     REDIS_MAX_CONNECTIONS: int = Field(
         default=10, description="Max Redis connections (reduced from 50)"
     )
+    REDIS_POOL_TIMEOUT: float = Field(
+        default=1.0,
+        gt=0,
+        description=(
+            "Seconds a Redis command waits for a free pooled connection before "
+            "the cache fails open"
+        ),
+    )
 
     # Cache configuration
     CACHE_ENABLED: bool = Field(default=True)

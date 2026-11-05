@@ -11,9 +11,10 @@ async def test_initialize_cache_layer_keeps_redis_for_provider_budget_when_cache
     import src.api.base_dependencies as dependencies
 
     class _Redis:
-        def __init__(self, redis_url, max_connections):
+        def __init__(self, redis_url, max_connections, pool_timeout):
             self.redis_url = redis_url
             self.max_connections = max_connections
+            self.pool_timeout = pool_timeout
             self.connected = False
 
         async def connect(self):
@@ -33,6 +34,10 @@ async def test_initialize_cache_layer_keeps_redis_for_provider_budget_when_cache
     assert dependencies.get_cache_service() is not None
     assert dependencies.get_cache_service().enabled is False
     assert dependencies._redis_client.connected is True
+    assert (
+        dependencies._redis_client.pool_timeout
+        == dependencies.settings.REDIS_POOL_TIMEOUT
+    )
 
     await dependencies.shutdown_cache_layer()
 
