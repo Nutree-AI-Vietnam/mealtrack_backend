@@ -1,7 +1,7 @@
 """Redis purge every movement write awaits before it returns.
 
 The API registers this hook at startup in every environment, so a read after
-the write never waits on the Queue worker that consumes movement events.
+the write never waits on the background handlers of movement events.
 """
 
 from __future__ import annotations

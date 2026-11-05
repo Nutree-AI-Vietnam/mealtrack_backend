@@ -76,11 +76,19 @@ async def _enqueue(factory, user_id: str, **overrides):
     return job
 
 
-async def _claim(factory, *, lease_seconds: int = 120, capacity: int = 4):
+async def _claim(
+    factory,
+    *,
+    lease_seconds: int = 120,
+    capacity: int = 4,
+    job_types=frozenset(AiJobType),
+):
     return await _in_tx(
         factory,
         lambda repo: repo.claim_next(
-            lease_seconds=lease_seconds, global_capacity=capacity
+            lease_seconds=lease_seconds,
+            global_capacity=capacity,
+            job_types=job_types,
         ),
     )
 
@@ -182,6 +190,55 @@ async def test_running_chat_turns_do_not_use_worker_capacity(
     claim = await _claim(async_session_factory, capacity=1)
 
     assert claim is not None and claim.id == scan.id
+
+
+@pytest.mark.asyncio
+async def test_a_worker_claims_only_the_types_it_can_run(
+    pg_session, async_session_factory
+):
+    user_id = await _user(pg_session)
+    # Queued first: an older worker built before this type existed.
+    week = await _enqueue(
+        async_session_factory, user_id, job_type=AiJobType.WEEKLY_PLAN
+    )
+    scan = await _enqueue(async_session_factory, user_id, job_type=AiJobType.MEAL_SCAN)
+    short_types = frozenset({AiJobType.MEAL_SCAN, AiJobType.PARSE_TEXT})
+
+    claim = await _claim(async_session_factory, job_types=short_types)
+    assert claim is not None and claim.id == scan.id
+    # The week stays queued for a worker that can write it.
+    assert await _claim(async_session_factory, job_types=short_types) is None
+    assert (await _row(async_session_factory, week.id)).status == "queued"
+
+    week_claim = await _claim(
+        async_session_factory, job_types=frozenset({AiJobType.WEEKLY_PLAN})
+    )
+    assert week_claim is not None and week_claim.id == week.id
+
+
+@pytest.mark.asyncio
+async def test_long_jobs_do_not_use_the_short_jobs_capacity(
+    pg_session, async_session_factory
+):
+    user_id = await _user(pg_session)
+    weeks = frozenset({AiJobType.WEEKLY_PLAN})
+    short_types = frozenset({AiJobType.MEAL_SCAN})
+    for _ in range(2):
+        await _enqueue(async_session_factory, user_id, job_type=AiJobType.WEEKLY_PLAN)
+    scan = await _enqueue(async_session_factory, user_id, job_type=AiJobType.MEAL_SCAN)
+
+    assert await _claim(async_session_factory, capacity=1, job_types=weeks)
+    # The long lanes are full ...
+    assert await _claim(async_session_factory, capacity=1, job_types=weeks) is None
+    # ... and a scan still starts at once.
+    claim = await _claim(async_session_factory, capacity=1, job_types=short_types)
+    assert claim is not None and claim.id == scan.id
+
+
+@pytest.mark.asyncio
+async def test_claim_needs_at_least_one_type(pg_session, async_session_factory):
+    with pytest.raises(ValueError):
+        await _claim(async_session_factory, job_types=frozenset())
 
 
 @pytest.mark.asyncio
@@ -637,6 +694,55 @@ async def test_concurrent_workers_never_claim_the_same_job(
 
     claimed = [claim.id for claim in claims if claim is not None]
     assert sorted(claimed) == sorted(job.id for job in jobs)
+
+
+@pytest.mark.asyncio
+async def test_retention_deletes_only_old_finished_jobs(
+    pg_session, async_session_factory
+):
+    user_id = await _user(pg_session)
+    jobs = [await _enqueue(async_session_factory, user_id) for _ in range(4)]
+    finished = []
+    for outcome in ("complete", "complete", "fail"):
+        claim = await _claim(async_session_factory)
+        assert claim is not None
+        if outcome == "complete":
+            await _in_tx(
+                async_session_factory,
+                lambda repo, claim=claim: repo.complete(
+                    claim, result={"items": []}, notify_delay_seconds=8
+                ),
+            )
+        else:
+            await _in_tx(
+                async_session_factory,
+                lambda repo, claim=claim: repo.fail_attempt(
+                    claim,
+                    error=PERMANENT,
+                    retry_delay_seconds=None,
+                    notify_delay_seconds=0,
+                ),
+            )
+        finished.append(claim.id)
+    old_done, new_done, old_failed = finished
+    (old_queued,) = [job.id for job in jobs if job.id not in finished]
+    assert (await _row(async_session_factory, old_failed)).status == "failed"
+    assert (await _row(async_session_factory, old_queued)).status == "queued"
+    for job_id in (old_done, old_failed, old_queued):
+        await _shift(async_session_factory, job_id, created_at=-timedelta(days=31))
+
+    # One row per batch: the second batch takes the other old finished job.
+    for expected in (1, 1, 0):
+        deleted = await _in_tx(
+            async_session_factory,
+            lambda repo: repo.delete_finished(older_than_days=30, limit=1),
+        )
+        assert deleted == expected
+
+    async with async_session_factory() as session:
+        left = set((await session.execute(select(AiJobORM.id))).scalars().all())
+    # A queued job is never deleted, however old; a recent one stays too.
+    assert left == {old_queued, new_done}
 
 
 @pytest.mark.asyncio

@@ -1,10 +1,10 @@
-"""Ask the Worker again for a meal's value insights when its result never came.
+"""Ask again for a meal's value insights when its result never came.
 
-The backend only reads `meal_insight:{meal_id}`; the nutreeai_async Worker
-writes it after consuming the meal's Queue event. When that event is lost
-(best-effort publish, Queue retention after a Worker outage) the key never
-appears and the app shows no meal review. Re-publishing the meal's event
-from the status read lets the Worker generate it while the app is polling.
+The meal's integration event generates `meal_insight:{meal_id}` on a
+background task in the API process. When that run is lost (AI failure, or a
+restart before it finished) the key never appears and the app shows no meal
+review. Re-publishing the meal's event from the status read generates it
+while the app is polling.
 """
 
 from __future__ import annotations
@@ -21,9 +21,9 @@ from src.domain.utils.timezone_utils import utc_now
 
 logger = logging.getLogger(__name__)
 
-# The Worker usually answers in 15-40 s; asking sooner would double its work.
+# Generation usually takes 15-40 s; asking sooner would double the work.
 INSIGHT_RECOVERY_DELAY = timedelta(minutes=2)
-# Matches the Worker's seven-day insight TTL: older meals were never kept.
+# Matches the seven-day insight TTL: older meals were never kept.
 INSIGHT_RECOVERY_WINDOW = timedelta(days=7)
 INSIGHT_RECOVERY_COOLDOWN_SECONDS = 10 * 60
 INSIGHT_RECOVERY_GUARD_PREFIX = "meal_insight_recovery:"

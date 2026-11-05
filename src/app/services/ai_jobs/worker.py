@@ -84,6 +84,8 @@ class AiJobWorker:
         )
         self._ready = ready or _always_ready
         self._executors = dict(executors)
+        # Claim only what this worker can run (see claim_next).
+        self._job_types = frozenset(self._executors)
         self._cancel_signals = cancel_signals
         self._wakeup = wakeup
         self._concurrency = max(1, concurrency)
@@ -136,6 +138,7 @@ class AiJobWorker:
             claim = await uow.ai_jobs.claim_next(
                 lease_seconds=self._lease_seconds,
                 global_capacity=self._global_capacity,
+                job_types=self._job_types,
             )
         if claim is None:
             return False

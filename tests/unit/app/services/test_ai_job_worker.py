@@ -158,8 +158,12 @@ async def test_run_once_without_a_due_job_runs_nothing(uow):
 
     assert await _worker(uow, {AiJobType.PARSE_TEXT: executor}).run_once() is False
 
+    # It asks only for the types it can run, so an older worker never takes
+    # and fails a job type it was built before.
     uow.ai_jobs.claim_next.assert_awaited_once_with(
-        lease_seconds=LEASE_SECONDS, global_capacity=GLOBAL_CAPACITY
+        lease_seconds=LEASE_SECONDS,
+        global_capacity=GLOBAL_CAPACITY,
+        job_types=frozenset({AiJobType.PARSE_TEXT}),
     )
     assert not executor.started.is_set()
 

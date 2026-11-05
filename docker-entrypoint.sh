@@ -59,8 +59,35 @@ WORKERS="${UVICORN_WORKERS:-4}"
 DB_MODE="${DB_CONNECTION_MODE:-auto}"
 log "Uvicorn workers: ${WORKERS}"
 log "DB_CONNECTION_MODE: ${DB_MODE} (empty/auto = detect from APP_DATABASE_URL host)"
+
+# Restart each worker after a jittered number of requests. Python keeps its
+# memory high-water mark, so a worker's RSS climbs for days between deploys.
+# Uvicorn's supervisor starts a replacement at once while the other workers
+# keep serving. A single worker is the whole server, so it is never recycled.
+# Set WORKER_MAX_REQUESTS=0 to turn recycling off. These names avoid the
+# UVICORN_ prefix on purpose: uvicorn reads UVICORN_* variables by itself, so
+# UVICORN_LIMIT_MAX_REQUESTS=0 would make every worker exit at once.
+MAX_REQUESTS="${WORKER_MAX_REQUESTS:-50000}"
+MAX_REQUESTS_JITTER="${WORKER_MAX_REQUESTS_JITTER:-25000}"
+for value in "$WORKERS" "$MAX_REQUESTS" "$MAX_REQUESTS_JITTER"; do
+    case "$value" in
+        ''|*[!0-9]*)
+            log "❌ UVICORN_WORKERS, WORKER_MAX_REQUESTS and WORKER_MAX_REQUESTS_JITTER must be whole numbers"
+            exit 1
+            ;;
+    esac
+done
+RECYCLE_ARGS=()
+if [ "$WORKERS" -gt 1 ] && [ "$MAX_REQUESTS" -gt 0 ]; then
+    RECYCLE_ARGS=(--limit-max-requests "$MAX_REQUESTS" --limit-max-requests-jitter "$MAX_REQUESTS_JITTER")
+    log "Worker recycling: after ${MAX_REQUESTS}-$((MAX_REQUESTS + MAX_REQUESTS_JITTER)) requests"
+else
+    log "Worker recycling: off"
+fi
+
 exec uvicorn src.api.main:app \
     --host 0.0.0.0 \
     --port "$PORT" \
     --workers "$WORKERS" \
-    --loop uvloop
+    --loop uvloop \
+    "${RECYCLE_ARGS[@]}"

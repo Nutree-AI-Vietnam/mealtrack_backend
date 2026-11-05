@@ -101,7 +101,7 @@ __all__ = [
 
 
 def _get_event_publisher():
-    """Return the required Cloudflare Queue publisher."""
+    """Return the required integration event publisher."""
     return get_integration_event_publisher()
 
 

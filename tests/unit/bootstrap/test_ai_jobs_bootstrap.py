@@ -19,6 +19,9 @@ from src.domain.model.ai_jobs import AiJobType
 from src.infra.database.uow_async import AsyncUnitOfWork
 
 LOGGER = "src.bootstrap.ai_jobs"
+# One short job type, so a start runs exactly one worker loop and the notifier.
+SHORT_ONLY = {AiJobType.MEAL_SCAN: object()}
+LANES_MESSAGE = "AI job lanes: 2 short (cap 4 across workers), 3 long (cap 6)"
 
 # Captured before any test patches a getter, so caches can always be cleared.
 _CACHED_GETTERS = (
@@ -74,11 +77,14 @@ def _settings(**overrides) -> SimpleNamespace:
         "AI_JOBS_CHAT_BACKGROUND_ENABLED": True,
         "AI_JOBS_WORKER_CONCURRENCY": 2,
         "AI_JOBS_GLOBAL_CAPACITY": 4,
+        "AI_JOBS_LONG_WORKER_CONCURRENCY": 3,
+        "AI_JOBS_LONG_GLOBAL_CAPACITY": 6,
         "AI_JOBS_LEASE_SECONDS": 120,
         "AI_JOBS_HEARTBEAT_SECONDS": 2.0,
         "AI_JOBS_EXECUTION_DEADLINE_SECONDS": 90,
         "AI_JOBS_POLL_SECONDS": 1.0,
         "AI_JOBS_NOTIFY_GRACE_SECONDS": 8,
+        "AI_JOBS_RETENTION_DAYS": 30,
     }
     return SimpleNamespace(**{**values, **overrides})
 
@@ -91,11 +97,13 @@ def env(monkeypatch):
         probe=StubSchemaProbe(),
         worker=FakeLoop(),
         notifier=FakeLoop(),
+        janitor=FakeLoop(),
         push_executor=object(),
     )
     # Read at call time, so a test can swap in another loop before starting.
     env.AiJobWorker = MagicMock(side_effect=lambda **_: env.worker)
     env.AiJobNotifier = MagicMock(side_effect=lambda **_: env.notifier)
+    env.AiJobJanitor = MagicMock(side_effect=lambda **_: env.janitor)
     env.FcmPushSender = MagicMock()
     env.get_push_executor = MagicMock(return_value=env.push_executor)
     env.shutdown_push_executor = MagicMock()
@@ -106,6 +114,7 @@ def env(monkeypatch):
     for name in (
         "AiJobWorker",
         "AiJobNotifier",
+        "AiJobJanitor",
         "FcmPushSender",
         "get_push_executor",
         "shutdown_push_executor",
@@ -181,6 +190,8 @@ async def test_start_runs_the_worker_and_the_notifier_once(env, caplog):
             deadline_seconds=90,
             poll_seconds=1.0,
             notify_grace_seconds=8,
+            # Short jobs poll steadily: the API service cannot wake this process.
+            max_idle_seconds=1.0,
             deadline_overrides={
                 AiJobType.RECIPE_IMPORT: 120.0,
                 AiJobType.WEEKLY_PLAN: 900.0,
@@ -193,12 +204,18 @@ async def test_start_runs_the_worker_and_the_notifier_once(env, caplog):
             sender=env.FcmPushSender.return_value,
             ready=env.probe.ready,
         )
+        env.AiJobJanitor.assert_called_once_with(
+            uow_factory=AsyncUnitOfWork,
+            retention_days=30,
+            ready=env.probe.ready,
+        )
         stop = ai_jobs_bootstrap._stop
         assert stop is not None and not stop.is_set()
-        assert len(ai_jobs_bootstrap._tasks) == 2
+        assert len(ai_jobs_bootstrap._tasks) == 3
         assert env.worker.stops == [stop]
         assert env.notifier.stops == [stop]
-        assert _messages(caplog) == ["AI job worker started"]
+        assert env.janitor.stops == [stop]
+        assert _messages(caplog) == ["AI job worker started", LANES_MESSAGE]
     finally:
         await ai_jobs_bootstrap.stop_ai_jobs_background(timeout=1.0)
 
@@ -209,14 +226,69 @@ async def test_start_warns_but_still_runs_when_the_tables_are_missing(env, caplo
     caplog.set_level(logging.INFO, logger=LOGGER)
 
     try:
-        assert await ai_jobs_bootstrap.start_ai_jobs(dict) is True
+        assert await ai_jobs_bootstrap.start_ai_jobs(lambda: SHORT_ONLY) is True
 
         assert env.probe.calls == 1
         assert _messages(caplog, logging.WARNING) == [
             "AI job tables are not migrated; the worker idles until they are"
         ]
-        assert len(ai_jobs_bootstrap._tasks) == 2
+        assert len(ai_jobs_bootstrap._tasks) == 3
         assert "AI job worker started" in _messages(caplog)
+    finally:
+        await ai_jobs_bootstrap.stop_ai_jobs_background(timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_long_jobs_get_their_own_lanes_and_cap(env):
+    """A burst of weeks being written never takes a meal scan's lane."""
+    short_loop, long_loop = FakeLoop(), FakeLoop()
+    env.AiJobWorker.side_effect = [short_loop, long_loop]
+    scan, chat, week = object(), object(), object()
+    executors = {
+        AiJobType.MEAL_SCAN: scan,
+        AiJobType.CHAT: chat,
+        AiJobType.WEEKLY_PLAN: week,
+    }
+
+    try:
+        assert ai_jobs_bootstrap.start_ai_jobs_background(executors) is True
+
+        short_call, long_call = env.AiJobWorker.call_args_list
+        assert short_call.kwargs["executors"] == {
+            AiJobType.MEAL_SCAN: scan,
+            AiJobType.CHAT: chat,
+        }
+        assert short_call.kwargs["concurrency"] == 2
+        assert short_call.kwargs["global_capacity"] == 4
+        assert short_call.kwargs["max_idle_seconds"] == 1.0
+        assert long_call.kwargs["executors"] == {AiJobType.WEEKLY_PLAN: week}
+        assert long_call.kwargs["concurrency"] == 3
+        assert long_call.kwargs["global_capacity"] == 6
+        assert long_call.kwargs["max_idle_seconds"] == 5.0
+        assert long_call.kwargs["deadline_overrides"][AiJobType.WEEKLY_PLAN] == 900.0
+        # Two worker loops, the notifier and the janitor, on one stop event.
+        assert len(ai_jobs_bootstrap._tasks) == 4
+        await asyncio.sleep(0)
+        stop = ai_jobs_bootstrap._stop
+        assert short_loop.stops == [stop] and long_loop.stops == [stop]
+    finally:
+        await ai_jobs_bootstrap.stop_ai_jobs_background(timeout=1.0)
+    assert short_loop.finished and long_loop.finished and env.notifier.finished
+
+
+@pytest.mark.asyncio
+async def test_zero_long_lanes_leaves_weeks_to_another_process(env):
+    env.settings = _settings(AI_JOBS_LONG_WORKER_CONCURRENCY=0)
+    executors = {AiJobType.MEAL_SCAN: object(), AiJobType.WEEKLY_PLAN: object()}
+
+    try:
+        assert ai_jobs_bootstrap.start_ai_jobs_background(executors) is True
+
+        env.AiJobWorker.assert_called_once()
+        assert set(env.AiJobWorker.call_args.kwargs["executors"]) == {
+            AiJobType.MEAL_SCAN
+        }
+        assert len(ai_jobs_bootstrap._tasks) == 3
     finally:
         await ai_jobs_bootstrap.stop_ai_jobs_background(timeout=1.0)
 
@@ -236,7 +308,7 @@ async def test_stop_does_nothing_when_nothing_runs(env):
 async def test_stop_signals_both_loops_and_waits_for_them(env, caplog):
     caplog.set_level(logging.INFO, logger=LOGGER)
     wakeup = ai_jobs_bootstrap.get_ai_job_wakeup()
-    assert ai_jobs_bootstrap.start_ai_jobs_background({}) is True
+    assert ai_jobs_bootstrap.start_ai_jobs_background(SHORT_ONLY) is True
     tasks = list(ai_jobs_bootstrap._tasks)
     stop = ai_jobs_bootstrap._stop
 
@@ -246,7 +318,7 @@ async def test_stop_signals_both_loops_and_waits_for_them(env, caplog):
     # Idle worker lanes wake at once instead of sleeping out their poll.
     assert wakeup.generation == 1
     assert all(task.done() and not task.cancelled() for task in tasks)
-    assert env.worker.finished and env.notifier.finished
+    assert env.worker.finished and env.notifier.finished and env.janitor.finished
     assert ai_jobs_bootstrap._tasks == []
     assert ai_jobs_bootstrap._stop is None
     assert _messages(caplog, logging.ERROR) == []
@@ -256,13 +328,14 @@ async def test_stop_signals_both_loops_and_waits_for_them(env, caplog):
 async def test_stop_cancels_a_loop_that_outlives_the_timeout(env, caplog):
     caplog.set_level(logging.INFO, logger=LOGGER)
     env.worker = FakeLoop(ignore_stop=True)
-    assert ai_jobs_bootstrap.start_ai_jobs_background({}) is True
-    worker_task, notifier_task = ai_jobs_bootstrap._tasks
+    assert ai_jobs_bootstrap.start_ai_jobs_background(SHORT_ONLY) is True
+    worker_task, notifier_task, janitor_task = ai_jobs_bootstrap._tasks
 
     await ai_jobs_bootstrap.stop_ai_jobs_background(timeout=0.01)
 
     assert worker_task.cancelled()
     assert notifier_task.done() and not notifier_task.cancelled()
+    assert janitor_task.done() and not janitor_task.cancelled()
     assert env.notifier.finished and not env.worker.finished
     assert ai_jobs_bootstrap._tasks == []
     assert ai_jobs_bootstrap._stop is None
@@ -274,7 +347,7 @@ async def test_stop_cancels_a_loop_that_outlives_the_timeout(env, caplog):
 async def test_a_loop_that_crashes_is_logged(env, caplog):
     caplog.set_level(logging.INFO, logger=LOGGER)
     env.worker = FakeLoop(error=RuntimeError("boom"))
-    assert ai_jobs_bootstrap.start_ai_jobs_background({}) is True
+    assert ai_jobs_bootstrap.start_ai_jobs_background(SHORT_ONLY) is True
     worker_task = ai_jobs_bootstrap._tasks[0]
 
     try:
@@ -294,17 +367,17 @@ async def test_a_loop_that_crashes_is_logged(env, caplog):
 
 @pytest.mark.asyncio
 async def test_worker_starts_again_after_a_stop(env):
-    assert ai_jobs_bootstrap.start_ai_jobs_background({}) is True
+    assert ai_jobs_bootstrap.start_ai_jobs_background(SHORT_ONLY) is True
     first_stop = ai_jobs_bootstrap._stop
     await ai_jobs_bootstrap.stop_ai_jobs_background(timeout=1.0)
-    env.worker, env.notifier = FakeLoop(), FakeLoop()
+    env.worker, env.notifier, env.janitor = FakeLoop(), FakeLoop(), FakeLoop()
 
     try:
-        assert ai_jobs_bootstrap.start_ai_jobs_background({}) is True
+        assert ai_jobs_bootstrap.start_ai_jobs_background(SHORT_ONLY) is True
         second_stop = ai_jobs_bootstrap._stop
         assert second_stop is not first_stop
         assert not second_stop.is_set()
-        assert len(ai_jobs_bootstrap._tasks) == 2
+        assert len(ai_jobs_bootstrap._tasks) == 3
     finally:
         await ai_jobs_bootstrap.stop_ai_jobs_background(timeout=1.0)
     assert env.AiJobWorker.call_count == 2
@@ -324,7 +397,7 @@ async def test_shutdown_closes_the_chat_runner_and_stops_the_worker(env, monkeyp
     runner = ai_jobs_bootstrap.get_chat_job_runner()
     aclose = AsyncMock()
     monkeypatch.setattr(runner, "aclose", aclose)
-    assert ai_jobs_bootstrap.start_ai_jobs_background({}) is True
+    assert ai_jobs_bootstrap.start_ai_jobs_background(SHORT_ONLY) is True
     tasks = list(ai_jobs_bootstrap._tasks)
 
     await ai_jobs_bootstrap.shutdown_ai_jobs()
@@ -343,7 +416,7 @@ async def test_shutdown_logs_a_failed_step_and_finishes_the_others(
     caplog.set_level(logging.INFO, logger=LOGGER)
     runner = ai_jobs_bootstrap.get_chat_job_runner()
     monkeypatch.setattr(runner, "aclose", AsyncMock(side_effect=RuntimeError("boom")))
-    assert ai_jobs_bootstrap.start_ai_jobs_background({}) is True
+    assert ai_jobs_bootstrap.start_ai_jobs_background(SHORT_ONLY) is True
     tasks = list(ai_jobs_bootstrap._tasks)
 
     await ai_jobs_bootstrap.shutdown_ai_jobs()
