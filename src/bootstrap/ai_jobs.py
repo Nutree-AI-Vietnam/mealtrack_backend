@@ -28,9 +28,13 @@ from src.app.services.ai_jobs import (
     RecipeImportJobExecutor,
 )
 from src.app.services.ai_jobs.executors import AiJobExecutor, Send
+from src.app.services.ai_jobs.weekly_plan_executor import WeeklyPlanJobExecutor
 from src.app.services.chat_turn_orchestrator import ChatTurnOrchestrator
 from src.domain.model.ai_jobs import AiJobType
 from src.domain.model.recipe_import.limits import IMPORT_DEADLINE_SECONDS
+from src.domain.model.weekly_meal_planner.limits import (
+    WEEKLY_PLAN_DEADLINE_SECONDS,
+)
 from src.infra.adapters.fcm_push_sender import FcmPushSender
 from src.infra.concurrency.executors import get_push_executor, shutdown_push_executor
 from src.infra.config.settings import get_settings
@@ -115,6 +119,7 @@ def build_ai_job_executors(
         AiJobType.RECIPE_IMPORT: RecipeImportJobExecutor(
             send=send, to_result=recipe_import_result
         ),
+        AiJobType.WEEKLY_PLAN: WeeklyPlanJobExecutor(send=send),
     }
 
 
@@ -161,12 +166,17 @@ def start_ai_jobs_background(executors: Mapping[AiJobType, AiJobExecutor]) -> bo
         deadline_seconds=settings.AI_JOBS_EXECUTION_DEADLINE_SECONDS,
         poll_seconds=settings.AI_JOBS_POLL_SECONDS,
         notify_grace_seconds=settings.AI_JOBS_NOTIFY_GRACE_SECONDS,
-        # A video import may download and transcribe before reading.
+        # A video import may download and transcribe before reading, and a
+        # week is twenty-one dishes written one call at a time.
         deadline_overrides={
             AiJobType.RECIPE_IMPORT: max(
                 settings.AI_JOBS_EXECUTION_DEADLINE_SECONDS,
                 IMPORT_DEADLINE_SECONDS,
-            )
+            ),
+            AiJobType.WEEKLY_PLAN: max(
+                settings.AI_JOBS_EXECUTION_DEADLINE_SECONDS,
+                WEEKLY_PLAN_DEADLINE_SECONDS,
+            ),
         },
         ready=probe.ready,
     )

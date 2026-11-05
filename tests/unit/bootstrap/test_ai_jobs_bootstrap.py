@@ -181,7 +181,10 @@ async def test_start_runs_the_worker_and_the_notifier_once(env, caplog):
             deadline_seconds=90,
             poll_seconds=1.0,
             notify_grace_seconds=8,
-            deadline_overrides={AiJobType.RECIPE_IMPORT: 120.0},
+            deadline_overrides={
+                AiJobType.RECIPE_IMPORT: 120.0,
+                AiJobType.WEEKLY_PLAN: 900.0,
+            },
             ready=env.probe.ready,
         )
         env.FcmPushSender.assert_called_once_with(executor=env.push_executor)
@@ -396,3 +399,54 @@ def test_build_executors_covers_every_job_type():
     assert isinstance(recipe_import, RecipeImportJobExecutor)
     assert recipe_import._send is send
     assert recipe_import._to_result is recipe_import_result
+
+
+class TestAWeekOutlivesTheDefaultDeadline:
+    """Twenty-one dishes take longer than the worker's ordinary ninety."""
+
+    def test_the_weekly_plan_job_gets_its_own_deadline(self):
+        from src.domain.model.weekly_meal_planner.limits import (
+            WEEKLY_PLAN_DEADLINE_SECONDS,
+        )
+        from src.infra.config.settings import Settings
+
+        # Six measured runs took 80 to 121 seconds with pricing stubbed out,
+        # and real pricing is slower. The default would kill every one.
+        assert Settings().AI_JOBS_EXECUTION_DEADLINE_SECONDS < 121
+        assert WEEKLY_PLAN_DEADLINE_SECONDS > 121 * 2
+
+    def test_the_override_is_what_a_week_gets_whatever_is_configured(self):
+        """worker.py looks the override up instead of the default.
+
+        The assertion used to read ``max(600, WEEKLY_PLAN_DEADLINE_SECONDS)
+        == 600`` under a docstring calling the override a floor, which the
+        worker has never done: it reads the override in place of the
+        configured default, longer or shorter. This pins the real lookup so
+        that raising the week's number cannot quietly stop applying.
+        """
+        from src.app.services.ai_jobs.worker import AiJobWorker
+        from src.domain.model.weekly_meal_planner.limits import (
+            WEEKLY_PLAN_DEADLINE_SECONDS,
+        )
+
+        for configured in (60.0, 1800.0):
+            worker = AiJobWorker(
+                uow_factory=MagicMock(),
+                executors={},
+                cancel_signals=MagicMock(),
+                wakeup=MagicMock(),
+                concurrency=1,
+                global_capacity=1,
+                lease_seconds=120,
+                heartbeat_seconds=2.0,
+                deadline_seconds=configured,
+                poll_seconds=1.0,
+                notify_grace_seconds=8,
+                deadline_overrides={
+                    AiJobType.WEEKLY_PLAN: WEEKLY_PLAN_DEADLINE_SECONDS
+                },
+            )
+            chosen = worker._deadline_overrides.get(
+                AiJobType.WEEKLY_PLAN, worker._deadline_seconds
+            )
+            assert chosen == WEEKLY_PLAN_DEADLINE_SECONDS

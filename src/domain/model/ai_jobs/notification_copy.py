@@ -16,6 +16,8 @@ _TITLES: dict[str, dict[tuple[AiJobType, AiJobStatus], str]] = {
         (AiJobType.CHAT, AiJobStatus.FAILED): "Your coach couldn't finish replying",
         (AiJobType.RECIPE_IMPORT, AiJobStatus.COMPLETED): "Your recipe is ready",
         (AiJobType.RECIPE_IMPORT, AiJobStatus.FAILED): "We couldn't import your recipe",
+        (AiJobType.WEEKLY_PLAN, AiJobStatus.COMPLETED): "Your week is planned",
+        (AiJobType.WEEKLY_PLAN, AiJobStatus.FAILED): "We couldn't plan your week",
     },
     "vi": {
         (AiJobType.MEAL_SCAN, AiJobStatus.COMPLETED): "Bữa ăn của bạn đã sẵn sàng",
@@ -29,6 +31,11 @@ _TITLES: dict[str, dict[tuple[AiJobType, AiJobStatus], str]] = {
             AiJobStatus.COMPLETED,
         ): "Công thức của bạn đã sẵn sàng",
         (AiJobType.RECIPE_IMPORT, AiJobStatus.FAILED): "Chưa nhập được công thức",
+        (
+            AiJobType.WEEKLY_PLAN,
+            AiJobStatus.COMPLETED,
+        ): "Thực đơn tuần của bạn đã xong",
+        (AiJobType.WEEKLY_PLAN, AiJobStatus.FAILED): "Chưa lên được thực đơn tuần",
     },
 }
 
@@ -38,12 +45,14 @@ _COMPLETED_BODIES: dict[str, dict[AiJobType, str]] = {
         AiJobType.PARSE_TEXT: "Tap to review and log it.",
         AiJobType.CHAT: "Tap to read the answer.",
         AiJobType.RECIPE_IMPORT: "Tap to review and save it.",
+        AiJobType.WEEKLY_PLAN: "Tap to see what you are eating this week.",
     },
     "vi": {
         AiJobType.MEAL_SCAN: "Chạm để xem thông tin dinh dưỡng.",
         AiJobType.PARSE_TEXT: "Chạm để xem lại và ghi nhận.",
         AiJobType.CHAT: "Chạm để đọc câu trả lời.",
         AiJobType.RECIPE_IMPORT: "Chạm để xem lại và lưu.",
+        AiJobType.WEEKLY_PLAN: "Chạm để xem tuần này ăn gì.",
     },
 }
 

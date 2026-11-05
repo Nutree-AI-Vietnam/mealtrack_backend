@@ -31,11 +31,13 @@ from src.app.commands.meal_planner import (
     GenerateWeeklyMealPlanCommand,
     LinkMealPlanSlotCommand,
     LogMealPlanSlotCommand,
+    PrepareWeeklyMealPlanCommand,
     SetMealPlanSlotSkipCommand,
     UnlogMealPlanSlotCommand,
     UpdateGroceryDayLinesCommand,
     UpdateMealPlanPantryStockCommand,
     UpdateWeeklyMealPlanCommand,
+    WriteWeeklyPlanDishesCommand,
 )
 from src.app.commands.meal_suggestion import (
     DiscoverMealsCommand,
@@ -139,11 +141,13 @@ from src.app.handlers.command_handlers.meal_planner import (
     GenerateWeeklyMealPlanCommandHandler,
     LinkMealPlanSlotCommandHandler,
     LogMealPlanSlotCommandHandler,
+    PrepareWeeklyMealPlanCommandHandler,
     SetMealPlanSlotSkipCommandHandler,
     UnlogMealPlanSlotCommandHandler,
     UpdateGroceryDayLinesCommandHandler,
     UpdateMealPlanPantryStockCommandHandler,
     UpdateWeeklyMealPlanCommandHandler,
+    WriteWeeklyPlanDishesCommandHandler,
 )
 from src.app.handlers.command_handlers.sync_weight_entries_command_handler import (
     SyncWeightEntriesCommandHandler,
@@ -517,6 +521,7 @@ def get_configured_event_bus() -> EventBus:
         get_image_store,
         get_meal_analyze_graph_settings,
         get_meal_translation_service,
+        get_nutrition_lookup_service,
         get_parse_text_settings,
         get_streak_restore_policy,
         get_subscription_service,
@@ -938,6 +943,20 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         UpdateWeeklyMealPlanCommand,
         UpdateWeeklyMealPlanCommandHandler(AsyncUnitOfWork),
+    )
+    # The week a model writes: one command opens the plan, the other fills
+    # it from the background job.
+    event_bus.register_handler(
+        PrepareWeeklyMealPlanCommand,
+        PrepareWeeklyMealPlanCommandHandler(AsyncUnitOfWork),
+    )
+    event_bus.register_handler(
+        WriteWeeklyPlanDishesCommand,
+        WriteWeeklyPlanDishesCommandHandler(
+            AsyncUnitOfWork,
+            generation_service=meal_generation_service,
+            nutrition_lookup=get_nutrition_lookup_service(),
+        ),
     )
     event_bus.register_handler(
         AiAdjustMealPlanCommand,

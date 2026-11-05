@@ -10,6 +10,7 @@ class AiJobType(StrEnum):
     MEAL_SCAN = "meal_scan"
     PARSE_TEXT = "parse_text"
     RECIPE_IMPORT = "recipe_import"
+    WEEKLY_PLAN = "weekly_plan"
 
 
 class AiJobStatus(StrEnum):
@@ -41,6 +42,8 @@ TERMINAL_AI_JOB_STATUSES = frozenset(
 # Cancelled jobs are never announced.
 NOTIFIABLE_AI_JOB_STATUSES = frozenset({AiJobStatus.COMPLETED, AiJobStatus.FAILED})
 # Chat turns start through the chat endpoint, never through POST /v1/ai-jobs.
+# A week is asked for through the meal-plan endpoints, which know the week
+# and the user's targets, never through POST /v1/ai-jobs.
 ENQUEUEABLE_AI_JOB_TYPES = frozenset(
     {AiJobType.MEAL_SCAN, AiJobType.PARSE_TEXT, AiJobType.RECIPE_IMPORT}
 )
