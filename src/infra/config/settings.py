@@ -5,7 +5,7 @@ Application configuration settings loaded from environment variables.
 import json
 from datetime import date
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -138,6 +138,16 @@ class Settings(BaseSettings):
     CLOUDFLARE_QUEUE_NAME: str = Field(default="")
     CLOUDFLARE_QUEUE_API_TOKEN: str = Field(default="")
     CLOUDFLARE_QUEUE_TIMEOUT_SECONDS: float = Field(default=3.0, gt=0)
+
+    # How integration events reach nutreeai_async. "redis_stream" appends to
+    # the `nutreeai_async:events:<ENVIRONMENT>` stream in REDIS_URL instead of
+    # calling the Cloudflare Queue API. Switch only once the Worker consumes
+    # that stream: docs/decisions/261105-0248-redis-stream-transport-for-nutreeai-async.md
+    INTEGRATION_EVENT_TRANSPORT: Literal["cloudflare_queue", "redis_stream"] = Field(
+        default="cloudflare_queue"
+    )
+    # Approximate entry cap; bounds Redis memory while the Worker is down.
+    INTEGRATION_EVENT_STREAM_MAXLEN: int = Field(default=20_000, gt=0)
 
     # Firebase
     FIREBASE_CREDENTIALS: str | None = Field(default=None)

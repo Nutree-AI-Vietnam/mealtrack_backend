@@ -15,6 +15,7 @@ from src.infra.adapters.cloudflare_queue_publisher import CloudflareQueuePublish
 from src.infra.adapters.google_play_subscription_adapter import (
     GooglePlaySubscriptionAdapter,
 )
+from src.infra.adapters.redis_stream_event_publisher import RedisStreamEventPublisher
 from src.infra.concurrency.executors import (
     get_firebase_executor as _get_firebase_executor,
 )
@@ -27,28 +28,34 @@ _publisher: BestEffortIntegrationEventPublisher | None = None
 _play_subscriptions: PlaySubscriptionPort | None = None
 
 
+def _build_event_transport() -> IntegrationEventPublisherPort:
+    """Pick the configured transport to nutreeai_async; Queue until switched."""
+    if get_settings().INTEGRATION_EVENT_TRANSPORT == "redis_stream":
+        return RedisStreamEventPublisher.from_settings()
+    return CloudflareQueuePublisher.from_settings()
+
+
 def get_integration_event_publisher() -> IntegrationEventPublisherPort:
-    """Return the process-local Queue publisher; transport failures must not fail writes."""
+    """Return the process-local event publisher; transport failures must not fail writes."""
     global _publisher
     if _publisher is None:
-        _publisher = BestEffortIntegrationEventPublisher(
-            CloudflareQueuePublisher.from_settings()
-        )
+        _publisher = BestEffortIntegrationEventPublisher(_build_event_transport())
     return _publisher
 
 
 def get_meal_insight_recovery() -> MealInsightRecovery:
-    """Re-request overdue meal insights through the same Queue publisher."""
+    """Re-request overdue meal insights through the same event publisher."""
     return MealInsightRecovery(
         get_integration_event_publisher(), get_settings().ENVIRONMENT
     )
 
 
 async def drain_integration_event_publisher() -> None:
-    """Flush in-flight Queue publishes during process shutdown."""
+    """Flush in-flight publishes during shutdown, then release the transport."""
     if _publisher is None:
         return
     await _publisher.drain()
+    await _publisher.aclose()
 
 
 def reset_integration_event_publisher_for_tests() -> None:

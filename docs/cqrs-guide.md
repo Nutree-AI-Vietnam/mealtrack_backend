@@ -152,8 +152,9 @@ async with AsyncUnitOfWork() as uow:
 
 The database transaction is authoritative for command completion. After the
 unit of work commits, mutation handlers publish cache invalidation or
-integration events directly to the required Cloudflare Queue; they do not wait
-on Redis maintenance. This applies to meal, hydration, movement, and derived
+integration events directly to the configured transport (Cloudflare Queue, or
+the Redis stream when `INTEGRATION_EVENT_TRANSPORT=redis_stream`); they do not
+wait on Redis maintenance. This applies to meal, hydration, movement, and derived
 macro/budget projections.
 
 Query handlers may read Redis first. A cache miss falls back to SQL, and the

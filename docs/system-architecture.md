@@ -78,6 +78,12 @@ Mutations (Meal, Hydration, Movement, User Profile/Settings, Cheat Day, Saved Su
 3. The Cloudflare Worker (`nutreeai_async`) validates the common envelope and its in-process router invokes every registered handler for that event type (e.g. cache invalidation, external API calls).
 4. The Worker ACKs only after all handlers succeed. A failure retries the message with backoff and eventually routes it to the DLQ.
 
+`INTEGRATION_EVENT_TRANSPORT=redis_stream` replaces the Cloudflare Queue hop
+with an `XADD` to the `nutreeai_async:events:<ENVIRONMENT>` stream in the
+shared Redis. The Worker then reads the stream through a consumer group. The
+default stays `cloudflare_queue` until the Worker consumes the stream:
+[`decisions/261105-0248-redis-stream-transport-for-nutreeai-async.md`](decisions/261105-0248-redis-stream-transport-for-nutreeai-async.md).
+
 This MVP accepts the post-commit Queue loss window for hydration. If the SQL
 transaction commits and the direct publish fails before Cloudflare accepts the
 message, the hydration row remains durable but the integration event can be

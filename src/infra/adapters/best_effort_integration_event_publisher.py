@@ -41,6 +41,12 @@ class BestEffortIntegrationEventPublisher:
         if still_running:
             await asyncio.gather(*still_running, return_exceptions=True)
 
+    async def aclose(self) -> None:
+        """Release the transport's connections; call after `drain`."""
+        close = getattr(self._inner, "aclose", None)
+        if callable(close):
+            await close()
+
     async def _publish_safe(self, payload: dict[str, Any]) -> None:
         try:
             await self._inner.publish(payload)

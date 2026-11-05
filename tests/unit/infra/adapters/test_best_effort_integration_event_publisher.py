@@ -53,3 +53,22 @@ async def test_best_effort_publisher_does_not_wait_for_inner() -> None:
 
     released.set()
     await publisher.drain()
+
+
+@pytest.mark.asyncio
+async def test_best_effort_publisher_closes_a_closable_transport() -> None:
+    inner = AsyncMock()
+    publisher = BestEffortIntegrationEventPublisher(inner)
+
+    await publisher.aclose()
+
+    inner.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_best_effort_publisher_close_skips_transport_without_aclose() -> None:
+    class QueueOnlyTransport:
+        async def publish(self, payload) -> None:
+            return None
+
+    await BestEffortIntegrationEventPublisher(QueueOnlyTransport()).aclose()

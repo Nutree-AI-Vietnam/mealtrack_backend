@@ -22,7 +22,8 @@ settings, wiring from adapters, and live health from OpenAPI `/docs`.
 | Redis optional caches | **Optional** | Bypass cache; continue from source of truth |
 | Redis provider budget | **Required for provider-origin manual writes** | Fail closed with `NUTRITION_PROVIDER_UNAVAILABLE` |
 | Redis meal-suggestion sessions | **Required transient state** (current design) | Session writes fail when store unavailable |
-| Cloudflare Queue integration | **Required** | Direct post-commit publication; Queue errors are surfaced to the caller or webhook retry path |
+| Cloudflare Queue integration | **Required** while `INTEGRATION_EVENT_TRANSPORT=cloudflare_queue` (default) | Best-effort post-commit publication; a failed publish is logged and the event is lost |
+| Redis stream integration transport | **Required** while `INTEGRATION_EVENT_TRANSPORT=redis_stream` | Best-effort post-commit `XADD` to `REDIS_URL`; a failed publish is logged and the event is lost |
 | Upstash Redis REST for Worker deletes | **Required for the Queue consumer** | Worker retries, then DLQ, on Redis/network/delete failures |
 | OpenAI translation | **Optional read-path localization** | Return canonical local/provider results without translated names; do not block startup or writes |
 | OpenAI, FatSecret, USDA, OFF, Brave, image stock APIs | **Optional enrichment** | Degrade to local/prior results when safe |
@@ -69,6 +70,7 @@ durable.
 | Food providers (USDA, FatSecret, OFF, Brave) | `src/infra/adapters/food_data_service.py`, `fat_secret_service.py`, `open_food_facts_service.py`, `brave_search_nutrition_service.py` |
 | Translation | `src/infra/adapters/openai_translation_adapter.py` |
 | Cloudflare Queue publisher | `src/infra/adapters/cloudflare_queue_publisher.py` |
+| Redis stream publisher (alternative transport) | `src/infra/adapters/redis_stream_event_publisher.py`; selected in `src/bootstrap/integration_services.py` |
 | Stock / generated images | `pexels_image_adapter.py`, `unsplash_image_adapter.py`, `imagen_image_generator.py`, `pollinations_image_generator.py`, `cloudflare_workers_image_generator.py` |
 | RevenueCat | `src/infra/adapters/revenuecat_adapter.py`; webhook entry in `src/api/routes/v1/webhooks.py` with sibling modules `webhook_subscription_lifecycle.py`, `webhook_lifetime_purchase.py`, `webhook_subscription_rows.py`, `webhook_lifecycle_events.py`, `webhook_referral_funnel.py`, `webhook_lookup_parsing.py` |
 | Google Play Developer API | `src/infra/adapters/google_play_subscription_adapter.py`, `google_play_auth.py`; webhook side `webhook_play_renewal_cancel.py` |
@@ -173,6 +175,20 @@ optional caches.
 - `HMAC`, revision tables/fencing, cache writes, local-vs-Cloudflare dual
   routing, and percentage canaries are intentionally out of scope for this
   slice.
+
+### Integration event transport
+
+- `INTEGRATION_EVENT_TRANSPORT` picks how events reach `nutreeai_async`:
+  `cloudflare_queue` (default) or `redis_stream`. The backend publishes through
+  exactly one transport; never both, or the Worker processes events twice.
+- `redis_stream` appends the same envelope as compact JSON in the `event` field
+  of `nutreeai_async:events:<ENVIRONMENT>`, trimmed to about
+  `INTEGRATION_EVENT_STREAM_MAXLEN` entries. The Worker reads it through the
+  `nutreeai_async` consumer group.
+- Switch an environment only after its Worker consumes the stream, and keep
+  Upstash eviction disabled so the stream cannot be evicted. Consumer contract
+  and rollout:
+  [`decisions/261105-0248-redis-stream-transport-for-nutreeai-async.md`](decisions/261105-0248-redis-stream-transport-for-nutreeai-async.md).
 
 ### Cloudflare integration event orchestration
 

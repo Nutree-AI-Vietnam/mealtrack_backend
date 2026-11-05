@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -11,19 +12,58 @@ from src.bootstrap.integration_services import (
 )
 
 
-def test_integration_event_publisher_is_process_singleton(monkeypatch):
-    reset_integration_event_publisher_for_tests()
-    inner = object()
+def _use_transport(monkeypatch, transport: str) -> dict[str, object]:
+    """Stub both transports and select one; returns the built inners by name."""
+    inners = {"cloudflare_queue": object(), "redis_stream": AsyncMock()}
+    monkeypatch.setattr(
+        "src.bootstrap.integration_services.get_settings",
+        lambda: SimpleNamespace(INTEGRATION_EVENT_TRANSPORT=transport),
+    )
     monkeypatch.setattr(
         "src.bootstrap.integration_services.CloudflareQueuePublisher",
-        SimpleNamespace(from_settings=lambda: inner),
+        SimpleNamespace(from_settings=lambda: inners["cloudflare_queue"]),
     )
+    monkeypatch.setattr(
+        "src.bootstrap.integration_services.RedisStreamEventPublisher",
+        SimpleNamespace(from_settings=lambda: inners["redis_stream"]),
+    )
+    return inners
+
+
+def test_integration_event_publisher_is_process_singleton(monkeypatch):
+    reset_integration_event_publisher_for_tests()
+    inners = _use_transport(monkeypatch, "cloudflare_queue")
 
     first = get_integration_event_publisher()
     second = get_integration_event_publisher()
 
     assert first is second
-    assert first._inner is inner
+    assert first._inner is inners["cloudflare_queue"]
+    reset_integration_event_publisher_for_tests()
+
+
+def test_redis_stream_transport_replaces_the_cloudflare_queue(monkeypatch):
+    reset_integration_event_publisher_for_tests()
+    inners = _use_transport(monkeypatch, "redis_stream")
+
+    publisher = get_integration_event_publisher()
+
+    assert publisher._inner is inners["redis_stream"]
+    reset_integration_event_publisher_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_drain_closes_the_transport_after_in_flight_publishes(monkeypatch):
+    reset_integration_event_publisher_for_tests()
+    inners = _use_transport(monkeypatch, "redis_stream")
+    stream = inners["redis_stream"]
+    publisher = get_integration_event_publisher()
+    await publisher.publish({"event_type": "meal.created.v1"})
+
+    await drain_integration_event_publisher()
+
+    stream.publish.assert_awaited_once_with({"event_type": "meal.created.v1"})
+    stream.aclose.assert_awaited_once()
     reset_integration_event_publisher_for_tests()
 
 
