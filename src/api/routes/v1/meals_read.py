@@ -207,8 +207,8 @@ async def get_meal_value_insights(
 ):
     """Return current value-insight cache status for a meal.
 
-    An overdue miss re-requests the insight from the Worker, so a lost Queue
-    event does not leave the meal without a review for good.
+    An overdue miss re-publishes the meal's event, so a lost generation does
+    not leave the meal without a review for good.
     """
     meal = await event_bus.send(GetMealByIdQuery(meal_id=meal_id, user_id=user_id))
     insight_service = MealValueInsightService()

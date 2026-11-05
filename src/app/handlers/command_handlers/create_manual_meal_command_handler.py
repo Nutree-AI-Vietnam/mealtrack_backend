@@ -144,7 +144,7 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
                 )
             _db_ms = (time.perf_counter() - _t_db_start) * 1000
 
-            # Queue consumer work remains asynchronous after publication succeeds.
+            # The event's follow-up work runs on a background task after publication.
             _t_cache_start = time.perf_counter()
             _cache_ms = (time.perf_counter() - _t_cache_start) * 1000
 

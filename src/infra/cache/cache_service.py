@@ -95,9 +95,7 @@ class CacheService(CachePort):
         revision_field: str | None = None,
     ) -> bool:
         """Write a cached value asynchronously."""
-        return await self.set_json_now(
-            key, value, ttl, revision_field=revision_field
-        )
+        return await self.set_json_now(key, value, ttl, revision_field=revision_field)
 
     async def set_json_now(
         self,
@@ -125,6 +123,21 @@ class CacheService(CachePort):
                     key, payload, revision, effective_ttl
                 )
         return await self.redis.set(key, payload, effective_ttl)
+
+    async def set_json_with_revision(
+        self, key: str, value: Any, revision: int, ttl: int
+    ) -> bool:
+        """Write a value unless a newer revision of it is already stored."""
+        if not self.enabled:
+            return False
+        payload = json.dumps(value, default=_json_serializer)
+        return await self.redis.set_if_revision_newer(key, payload, revision, ttl)
+
+    async def invalidate_with_revision(self, key: str, revision: int, ttl: int) -> bool:
+        """Delete a value and fence out older writes unless a newer one owns it."""
+        if not self.enabled:
+            return False
+        return await self.redis.delete_if_revision_not_newer(key, revision, ttl)
 
     @staticmethod
     def _key_hash(key: str) -> str:

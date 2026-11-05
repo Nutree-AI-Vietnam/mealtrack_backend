@@ -1,4 +1,4 @@
-"""Wrap Queue publication so transport failures cannot fail a committed write."""
+"""Run event publication on background tasks so it cannot fail a committed write."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ _DRAIN_TIMEOUT_SECONDS = 5.0
 
 
 class BestEffortIntegrationEventPublisher:
-    """Publish after commit on a background task; log Queue failures and continue."""
+    """Publish after commit on a background task; log failures and continue."""
 
     def __init__(self, inner: IntegrationEventPublisherPort) -> None:
         self._inner = inner
@@ -31,7 +31,7 @@ class BestEffortIntegrationEventPublisher:
         task.add_done_callback(self._pending.discard)
 
     async def drain(self, timeout: float = _DRAIN_TIMEOUT_SECONDS) -> None:
-        """Wait for in-flight Queue publishes during process shutdown."""
+        """Wait for in-flight publishes during process shutdown."""
         pending = [task for task in self._pending if not task.done()]
         if not pending:
             return

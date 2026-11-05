@@ -1,8 +1,10 @@
 """Delete Firebase Auth accounts whose queued cleanup never ran.
 
-Account deletion soft-deletes the user and queues ``user.deleted.v1``; the
-nutreeai_async worker then deletes the Firebase Auth user. Events that expired
-while the worker was down never reached Firebase.
+Account deletion soft-deletes the user and publishes ``user.deleted.v1``,
+whose in-process handler deletes the Firebase Auth user (before 2026-11, the
+nutreeai_async worker did). A deletion fails for good after three attempts,
+logged as "Firebase account cleanup failed for firebase_uid=...", or when the
+process stops mid-run; worker-era events also expired while it was down.
 
 Soft-delete tombstones ``users.firebase_uid``, so the original UIDs of recent
 deletions survive only in the "Account deletion completed for firebase_uid"

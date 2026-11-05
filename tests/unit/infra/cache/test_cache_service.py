@@ -177,3 +177,34 @@ async def test_revision_is_unknown_when_cache_disabled():
     assert await service.get_json_with_revision("k", "r") == (None, None)
     await service.purge(["k"], {"r": 60})
     redis.purge.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_set_json_with_revision_writes_through_the_revision_fence(service):
+    service.redis.set_if_revision_newer = AsyncMock(return_value=True)
+
+    assert await service.set_json_with_revision("k", {"a": 1}, 7, 60)
+
+    service.redis.set_if_revision_newer.assert_awaited_once_with("k", '{"a": 1}', 7, 60)
+
+
+@pytest.mark.asyncio
+async def test_invalidate_with_revision_delegates_the_fenced_delete(service):
+    service.redis.delete_if_revision_not_newer = AsyncMock(return_value=False)
+
+    assert not await service.invalidate_with_revision("k", 7, 60)
+
+    service.redis.delete_if_revision_not_newer.assert_awaited_once_with("k", 7, 60)
+
+
+@pytest.mark.asyncio
+async def test_revision_writes_are_skipped_when_caching_is_disabled(service):
+    service.enabled = False
+    service.redis.set_if_revision_newer = AsyncMock()
+    service.redis.delete_if_revision_not_newer = AsyncMock()
+
+    assert not await service.set_json_with_revision("k", {}, 1, 60)
+    assert not await service.invalidate_with_revision("k", 1, 60)
+
+    service.redis.set_if_revision_newer.assert_not_called()
+    service.redis.delete_if_revision_not_newer.assert_not_called()

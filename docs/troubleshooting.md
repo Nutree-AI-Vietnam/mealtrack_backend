@@ -109,38 +109,63 @@ redis-cli ping
 
 ---
 
-### Cloudflare Cache or Integration Event Stalls
+### Meal Insights, Firebase Cleanup or Profile Caches Lag
 
-**Problem:** A mutation succeeds, but its cache/integration event does not reach
-Cloudflare Queue or the Worker.
+**Problem:** A write succeeds, but its follow-up work does not happen: no meal
+review appears, a deleted account can still sign in with Firebase, or targets
+stay stale after a profile change.
 
-**Diagnosis:**
+**Diagnosis:** this work runs on background tasks in the API process
+(`src/api/services/in_process_integration_events.py`). Search the API logs:
 ```bash
-rg -n "hydration.created.v1|cache_invalidation.v1|CloudflareQueuePublisher|IntegrationEventRouter" src workers
+rg -n "in-process integration event handler failed|meal insight generated|Firebase account cleanup (completed|failed)|cache invalidation failed|No connection available" app.log
 ```
 
 **Solutions:**
-1. For hydration, confirm the business row committed, then check the API log for
-   the direct Queue publish result. Hydration no longer waits for the outbox
-   worker.
-2. Verify the environment-specific Queue ID, account ID, and valid Queue
-   credentials. The REST publisher must use the alphanumeric Queue ID, not the
-   Worker/Wrangler queue name. Publication is required; there is no disabled
-   fallback.
-3. Check the Worker logs for `integration_event_ack`,
-   `integration_event_retry`, `ack`, `retry`, or DLQ movement on the matching
-   `event_id`.
-4. For hydration, verify the Worker has valid Upstash Redis REST access,
-   `NEON_DATABASE_URL` (or `DATABASE_URL`), and the environment ingress queue.
-   A handler failure or database lookup failure retries the whole ingress event.
-5. Other mutation paths publish directly through the same Queue publisher;
-   inspect the API publication result and the Worker event ID.
+1. Missing meal review: the status read re-requests an overdue insight once
+   per 10 minutes (`meal_insight_recovery`). A `meal insight payload invalid`
+   or handler failure line means the AI answer was rejected or the provider
+   failed; the next recovery request retries it.
+2. Firebase account still active: find `Firebase account cleanup failed for
+   firebase_uid=...` and finish it with
+   `scripts/delete_missed_firebase_accounts.py`. A deploy that stopped the
+   process mid-run also leaves the UID only in the "Account deletion
+   completed" log line.
+3. Stale profile caches: look for `profile cache invalidation failed`; the
+   caches expire on their own TTL, and the next profile write purges again.
+4. `Redis ... error: No connection available.`: a command waited
+   `REDIS_POOL_TIMEOUT` for one of the worker's `REDIS_MAX_CONNECTIONS`
+   connections and the cache failed open. Look for a burst of events or a slow
+   Redis. Raise `REDIS_MAX_CONNECTIONS` only while connections × workers ×
+   instances stays under the Redis plan's limit (50 on the free Render plan).
 
-**MVP risk note:** if the SQL transaction commits and the direct Queue publish
-fails afterward, the hydration row is still durable but the event can be lost.
-There is no automatic outbox fallback for that path in this MVP.
+---
 
-**Evidence note:** staging/live deployment proof for this slice is currently pending or blocked on environment credentials. Do not mark the rollout complete until Queue, Worker, and Upstash access are verified separately.
+### Backend Memory Climbs Between Deploys
+
+**Problem:** Render memory for `nutree_backend` rises after each deploy:
+before worker recycling it went from 0.95 GB to 1.94 GB in six days, against
+a 2 GiB (2.15 GB) limit. It jumps on the first day and then slows, which is
+Python and glibc keeping their memory high-water mark rather than a leak that
+grows with every request.
+
+**What bounds it:**
+1. `docker-entrypoint.sh` restarts each worker after
+   `WORKER_MAX_REQUESTS` (50,000) plus up to `WORKER_MAX_REQUESTS_JITTER`
+   (25,000) requests, about once a day per worker today. The supervisor starts
+   a replacement at once; the restart costs about 4 s of CPU (app import) and
+   can drop a request or two that raced a closing keep-alive connection.
+   Look for `Maximum request limit of ... exceeded` in the logs.
+2. The image sets `MALLOC_ARENA_MAX=2`, which stops each thread from keeping
+   its own malloc arena.
+
+**Solutions:**
+1. Memory still near the limit: lower `WORKER_MAX_REQUESTS`, or move to a
+   plan with more memory.
+2. Restarts hurt more than the memory: raise `WORKER_MAX_REQUESTS`, or set it
+   to `0` and deploy at least weekly.
+3. Never set `UVICORN_LIMIT_MAX_REQUESTS`: uvicorn reads it directly, and a
+   value of `0` makes every worker exit at once.
 
 ---
 
@@ -152,6 +177,11 @@ There is no automatic outbox fallback for that path in this MVP.
 ```bash
 SQLALCHEMY_ECHO=true uvicorn src.api.main:app --reload
 ```
+On production, `pg_stat_statements` is enabled on Neon (since 2026-11-05):
+rank statements by `total_exec_time` there before guessing. Its counters
+reset when the compute restarts, while `pg_stat_user_tables` counts since
+2026-04-13, so a high `seq_scan` total there can be old history; compare two
+readings a few minutes apart.
 
 **Solutions:**
 1. Add indexes on frequently filtered columns

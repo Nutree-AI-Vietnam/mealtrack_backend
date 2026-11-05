@@ -22,8 +22,7 @@ settings, wiring from adapters, and live health from OpenAPI `/docs`.
 | Redis optional caches | **Optional** | Bypass cache; continue from source of truth |
 | Redis provider budget | **Required for provider-origin manual writes** | Fail closed with `NUTRITION_PROVIDER_UNAVAILABLE` |
 | Redis meal-suggestion sessions | **Required transient state** (current design) | Session writes fail when store unavailable |
-| Cloudflare Queue integration | **Required** | Direct post-commit publication; Queue errors are surfaced to the caller or webhook retry path |
-| Upstash Redis REST for Worker deletes | **Required for the Queue consumer** | Worker retries, then DLQ, on Redis/network/delete failures |
+| In-process integration events | **Best-effort follow-up** | Background tasks in the API process after commit; a failing handler is logged and skipped, work running at shutdown is dropped after the 5 s drain |
 | OpenAI translation | **Optional read-path localization** | Return canonical local/provider results without translated names; do not block startup or writes |
 | OpenAI, FatSecret, USDA, OFF, Brave, image stock APIs | **Optional enrichment** | Degrade to local/prior results when safe |
 | Sentry | **Optional observability** | Local logs only; facade no-ops without DSN |
@@ -43,16 +42,12 @@ disable this shared write-path budget.
 images, emails, auth tokens, full barcodes, or secrets. Prefer operation name,
 internal IDs, status codes, and error class.
 
-**Cloudflare async integration rule:** hydration is the current direct-publish
-path. The backend commits the hydration row first, then publishes
-`hydration.created.v1` directly to the required environment ingress Queue. The
-Worker orchestrator invokes registered handlers in order and ACKs only after
-all handlers succeed. A failure retries the whole ingress message and
-eventually reaches the ingress DLQ. There is no HMAC, no local-vs-Cloudflare
-dual routing, no percentage canary, no D1 delivery ledger, and no cache-value
-write path in this slice. The accepted MVP trade-off is that a post-commit
-Queue failure can lose the hydration event; only the committed database row is
-durable.
+**Integration event rule:** follow-up work for a committed write (meal
+insights, Firebase account cleanup, profile cache purges) runs on a background
+task in the API process after the response. It is best-effort: a handler
+failure is logged, and work still running at shutdown is dropped after the 5 s
+drain. Never rely on it for read-after-write freshness; the write path purges
+its own caches before responding.
 
 ---
 
@@ -68,14 +63,13 @@ durable.
 | OpenAI prompt-cache policy | `src/infra/services/ai/openai_prompt_cache_policy.py` |
 | Food providers (USDA, FatSecret, OFF, Brave) | `src/infra/adapters/food_data_service.py`, `fat_secret_service.py`, `open_food_facts_service.py`, `brave_search_nutrition_service.py` |
 | Translation | `src/infra/adapters/openai_translation_adapter.py` |
-| Cloudflare Queue publisher | `src/infra/adapters/cloudflare_queue_publisher.py` |
+| Integration events (in-process) | `src/app/events/in_process_event_router.py`; handlers in `src/api/services/in_process_integration_events.py`; publisher in `src/bootstrap/integration_services.py` |
 | Stock / generated images | `pexels_image_adapter.py`, `unsplash_image_adapter.py`, `imagen_image_generator.py`, `pollinations_image_generator.py`, `cloudflare_workers_image_generator.py` |
 | RevenueCat | `src/infra/adapters/revenuecat_adapter.py`; webhook entry in `src/api/routes/v1/webhooks.py` with sibling modules `webhook_subscription_lifecycle.py`, `webhook_lifetime_purchase.py`, `webhook_subscription_rows.py`, `webhook_lifecycle_events.py`, `webhook_referral_funnel.py`, `webhook_lookup_parsing.py` |
 | Google Play Developer API | `src/infra/adapters/google_play_subscription_adapter.py`, `google_play_auth.py`; webhook side `webhook_play_renewal_cancel.py` |
 | Web funnel redemption | `src/infra/services/web_funnel_*` |
 | Resend email | `src/infra/adapters/resend_email_adapter.py` |
 | Redis | `src/infra/cache/` |
-| Queue consumer | sibling `nutreeai_async` repository |
 | Sentry / observability facade | `src/infra/monitoring/`, `src/observability.py` |
 | Affiliate outbox client | `src/infra/adapters/affiliate_service_adapter.py`; dispatch trigger removed — see `docs/decisions/ADR-cron-jobs-removal.md` |
 | DB pool | `src/infra/database/config_async.py`, `connection_policy.py` — see `database-guide.md` |
@@ -149,52 +143,29 @@ Default: do not cache. Admission checklist lives in the selective-cache decision
 above. `FAIL_ON_CACHE_ERROR=false` is the expected production posture for
 optional caches.
 
-### Cloudflare async cache invalidation
+### Integration events
 
-- Non-hydration mutation paths publish versioned integration events directly to
-  Cloudflare Queue after the database transaction commits. There is no active
-  backend outbox relay for this path.
-- Hydration creation publishes `hydration.created.v1` directly to Cloudflare
-  Queue after its database transaction commits. The Worker orchestrator owns
-  its cache translation and invokes the same delete handler.
-- `CloudflareQueuePublisher.from_settings()` reads the Queue account, Queue ID,
-  token, and timeout settings. The REST API requires the Queue ID; the
-  human-readable Worker queue name is not a valid substitute. Blank Queue
-  account/token fields fall back to `CLOUDFLARE_ACCOUNT_ID` and
-  `CLOUDFLARE_API_TOKEN`; Queue-specific values override the generic values.
-  `CLOUDFLARE_QUEUE_ID` remains required. If
-  the fallback is used, the shared token must have both Queue and Workers AI
-  permissions. Publication is always attempted; when misconfigured, the
-  request fails after the database commit. The MVP accepts that post-commit
-  failure window for hydration.
-- The Worker validates the event envelope and deletes exact keys or bounded
-  patterns through Upstash Redis REST. Queue ACK/retry/DLQ semantics own the
-  delivery lifecycle.
-- `HMAC`, revision tables/fencing, cache writes, local-vs-Cloudflare dual
-  routing, and percentage canaries are intentionally out of scope for this
-  slice.
-
-### Cloudflare integration event orchestration
-
-- The integration-event redesign uses one versioned `IntegrationEvent` as the
-  ingress payload. Generic integration paths publish directly to the required
-  Queue after commit. Web-funnel claim and reconciliation jobs retain their
-  separate transactional outbox workflow.
-- Hydration events carry the hydration aggregate ID rather than a snapshot.
-  The hydration cache handler queries Neon for the hydration owner and local log
-  date, so adding another event does not require another Worker parser.
-- One ingress message owns the retry lifecycle. If a handler fails, earlier
-  handlers may run again on retry, so handlers must be idempotent.
-- Staging and production use separate ingress queues and matching
-  `environment` values. The MVP does not use D1 or a dynamic subscription
-  catalog.
-- Configure one environment-specific Worker ingress queue name in
-  `nutreeai_async/wrangler.jsonc` and its matching Cloudflare Queue ID as
-  `CLOUDFLARE_QUEUE_ID` in the backend. Generic integration events and
-  compatibility payloads share this queue during the migration.
-- Hydration creation currently registers cache invalidation. Notification and
-  email handlers remain follow-up work until their payload and idempotency
-  contracts are explicit.
+- Handlers publish one versioned `IntegrationEvent` after commit;
+  `BestEffortIntegrationEventPublisher` runs it on a background task and
+  `InProcessIntegrationEventRouter` runs every handler registered for its type.
+  Handlers are registered at startup by
+  `src/api/services/in_process_integration_events.py`; a failing handler does
+  not skip the others.
+- Meal events generate meal value insights, fenced by the event's
+  `occurred_at`: an older generation never overwrites a newer one, and edits
+  or deletes clear the old insight. Overdue insights are re-requested from the
+  status read (`meal_insight_recovery`).
+- Account deletion events delete the Firebase account with three attempts,
+  then log the UID at ERROR for `scripts/delete_missed_firebase_accounts.py`.
+- Profile, cheat-day and saved-suggestion events purge their caches. Their
+  pattern deletes scan 1,000 keys per round trip and stay off the write path.
+  Meal, hydration and movement day caches are purged on the write path, so
+  those events need nothing more.
+- These handlers replaced the Cloudflare Queue and the `nutreeai_async`
+  worker:
+  [`decisions/261105-0248-retire-nutreeai-async.md`](decisions/261105-0248-retire-nutreeai-async.md).
+  Web-funnel claim and reconciliation jobs keep their separate transactional
+  outbox.
 
 ### Parse-text nutrition validation
 

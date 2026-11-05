@@ -20,11 +20,9 @@ from src.domain.ports.integration_event_publisher_port import require_event_publ
 
 logger = logging.getLogger(__name__)
 
-LocalInsightHook = Callable[[str, dict[str, Any], datetime], None]
 LocalCacheInvalidationHook = Callable[
     [str, date | datetime, date | datetime | None], Awaitable[None]
 ]
-_local_insight_hook: LocalInsightHook | None = None
 _local_cache_invalidation_hook: LocalCacheInvalidationHook | None = None
 
 
@@ -47,12 +45,6 @@ class MealDeletedEvent(IntegrationEvent):
 
     event_type: Literal["meal.deleted.v1"] = "meal.deleted.v1"
     aggregate_type: Literal["meal"] = "meal"
-
-
-def register_local_insight_hook(hook: LocalInsightHook | None) -> None:
-    """Register the optional local-Redis insight writer used in development."""
-    global _local_insight_hook
-    _local_insight_hook = hook
 
 
 def register_local_cache_invalidation_hook(
@@ -123,7 +115,7 @@ async def publish_meal_event(
     old_meal_date: date | datetime | None = None,
     source: str = "meal_write",
 ) -> bool:
-    """Publish one committed meal integration event to the external Queue consumer."""
+    """Publish one committed meal integration event; its insight is generated in-process."""
     publisher = require_event_publisher(publisher)
     logger.debug("publishing meal event source=%s", source)
     resolved_user_id = str(user_id or getattr(meal, "user_id", "") or "")
@@ -167,6 +159,4 @@ async def publish_meal_event(
         data=data,
     )
     await publisher.publish(event.to_payload())
-    if insight is not None and _local_insight_hook is not None:
-        _local_insight_hook(str(meal.meal_id), insight, occurred_at)
     return True

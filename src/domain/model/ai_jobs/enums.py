@@ -59,3 +59,7 @@ ENQUEUEABLE_AI_JOB_TYPES = frozenset(
     {AiJobType.MEAL_SCAN, AiJobType.PARSE_TEXT, AiJobType.RECIPE_IMPORT}
     | DESCRIBE_AI_JOB_TYPES
 )
+# Jobs that run for minutes rather than seconds. Workers give them their own
+# lanes and their own capacity, so a burst of weeks never queues a meal scan
+# that someone is watching a spinner for.
+LONG_AI_JOB_TYPES = frozenset({AiJobType.WEEKLY_PLAN})

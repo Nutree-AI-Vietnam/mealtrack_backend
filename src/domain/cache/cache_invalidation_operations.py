@@ -1,10 +1,11 @@
 """Cache invalidations a write applies before it returns.
 
 The meal, hydration and movement builders run on the API write path in every
-environment, so reads after a write never wait on the nutreeai_async Queue
-worker. They name exact keys only; range-keyed caches are fenced by bumping
-``CacheKeys.intake_revision`` instead of a SCAN. The worker's purge
-(`src/domain/cache/cache-invalidation-builders.ts`) is a second pass.
+environment, so reads after a write never wait on background work. They name
+exact keys only; range-keyed caches are fenced by bumping
+``CacheKeys.intake_revision`` instead of a SCAN. The profile, cheat-day and
+saved-suggestion builders include pattern deletes and run from the in-process
+event handlers instead, after the write has returned.
 """
 
 from __future__ import annotations
@@ -24,7 +25,9 @@ SUPPORTED_LANGUAGES = ("en", "vi", "es", "fr", "de", "ja", "zh")
 
 def _expand_language_pattern(prefix: str) -> list[dict[str, str]]:
     """Expand a language-suffixed pattern into deterministic key deletes."""
-    return [{"op": DELETE_KEY, "key": f"{prefix}{lang}"} for lang in SUPPORTED_LANGUAGES]
+    return [
+        {"op": DELETE_KEY, "key": f"{prefix}{lang}"} for lang in SUPPORTED_LANGUAGES
+    ]
 
 
 def _week_start(value: date) -> date:
@@ -77,7 +80,9 @@ def build_meal_invalidation_operations(
     current_week_start = _week_start(current_date or date.today())
 
     operations: list[dict[str, str]] = [
-        *_expand_language_pattern(f"user:{user_id}:activities:{meal_date.isoformat()}:"),
+        *_expand_language_pattern(
+            f"user:{user_id}:activities:{meal_date.isoformat()}:"
+        ),
         {
             "op": DELETE_KEY,
             "key": CacheKeys.daily_macros(user_id, meal_date)[0],

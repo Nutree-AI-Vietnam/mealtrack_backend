@@ -24,6 +24,8 @@ def _run_entrypoint(
     production_variable: str | None = None,
     render: bool = False,
     migration_exit_code: int = 0,
+    workers: str = "1",
+    extra_env: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -45,9 +47,12 @@ def _run_entrypoint(
             "ENTRYPOINT_TEST_LOG": str(command_log),
             "MIGRATION_EXIT_CODE": str(migration_exit_code),
             "PORT": "8000",
-            "UVICORN_WORKERS": "1",
+            "UVICORN_WORKERS": workers,
         }
     )
+    environment.pop("WORKER_MAX_REQUESTS", None)
+    environment.pop("WORKER_MAX_REQUESTS_JITTER", None)
+    environment.update(extra_env or {})
     environment.pop("ENV", None)
     environment.pop("ENVIRONMENT", None)
     environment.pop("RENDER", None)
@@ -144,6 +149,72 @@ def test_invalid_non_production_toggle_fails_before_startup(
 
     assert result.returncode == 1
     assert "AUTO_MIGRATE must be one of" in result.stdout
+    assert commands == []
+
+
+def _uvicorn_command(commands: list[str]) -> str:
+    return next(command for command in commands if command.startswith("uvicorn "))
+
+
+def test_multiple_workers_are_recycled_after_jittered_request_counts(
+    tmp_path: Path,
+) -> None:
+    result, commands = _run_entrypoint(tmp_path, render=True, workers="2")
+
+    assert result.returncode == 0
+    assert _uvicorn_command(commands).endswith(
+        "--workers 2 --loop uvloop "
+        "--limit-max-requests 50000 --limit-max-requests-jitter 25000"
+    )
+    assert "Worker recycling: after 50000-75000 requests" in result.stdout
+
+
+def test_a_single_worker_is_never_recycled(tmp_path: Path) -> None:
+    """With one worker, uvicorn has no supervisor; exiting would stop the server."""
+    result, commands = _run_entrypoint(tmp_path, render=True, workers="1")
+
+    assert result.returncode == 0
+    assert "--limit-max-requests" not in _uvicorn_command(commands)
+    assert "Worker recycling: off" in result.stdout
+
+
+def test_recycling_limits_can_be_tuned_or_turned_off(tmp_path: Path) -> None:
+    tuned_dir = tmp_path / "tuned"
+    tuned_dir.mkdir()
+    _, tuned = _run_entrypoint(
+        tuned_dir,
+        render=True,
+        workers="4",
+        extra_env={
+            "WORKER_MAX_REQUESTS": "5000",
+            "WORKER_MAX_REQUESTS_JITTER": "500",
+        },
+    )
+    off_dir = tmp_path / "off"
+    off_dir.mkdir()
+    _, off = _run_entrypoint(
+        off_dir,
+        render=True,
+        workers="4",
+        extra_env={"WORKER_MAX_REQUESTS": "0"},
+    )
+
+    assert _uvicorn_command(tuned).endswith(
+        "--limit-max-requests 5000 --limit-max-requests-jitter 500"
+    )
+    assert "--limit-max-requests" not in _uvicorn_command(off)
+
+
+def test_non_numeric_recycling_limit_fails_before_startup(tmp_path: Path) -> None:
+    result, commands = _run_entrypoint(
+        tmp_path,
+        render=True,
+        workers="2",
+        extra_env={"WORKER_MAX_REQUESTS": "lots"},
+    )
+
+    assert result.returncode == 1
+    assert "must be whole numbers" in result.stdout
     assert commands == []
 
 
