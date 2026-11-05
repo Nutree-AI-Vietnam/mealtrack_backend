@@ -324,6 +324,19 @@ class Settings(BaseSettings):
         default=False,
         description="Write weekly plan dishes with a model, in a background job.",
     )
+    # The app shows its allergy and health-condition cards only when
+    # /v1/users/metrics sends an "allergies" key back — it reads the key's
+    # presence as the server supporting them, not a flag. Turning this off
+    # drops both keys from that response, so every build already installed
+    # hides both cards on the next open, with no release.
+    #
+    # Saved answers are kept and still exclude recipes: a user who told us
+    # about a shellfish allergy keeps being spared shellfish, they just
+    # cannot see or change the answer while this is off.
+    USER_METRICS_ALLERGIES_ENABLED: bool = Field(
+        default=True,
+        description="Send allergies and health conditions in GET /v1/users/metrics.",
+    )
     AI_JOBS_WORKER_CONCURRENCY: int = Field(default=2, ge=1, le=16)
     AI_JOBS_GLOBAL_CAPACITY: int = Field(default=4, ge=1, le=64)
     AI_JOBS_LEASE_SECONDS: int = Field(default=120, ge=30, le=3600)
