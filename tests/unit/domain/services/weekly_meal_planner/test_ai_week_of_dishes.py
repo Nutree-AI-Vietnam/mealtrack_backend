@@ -108,6 +108,40 @@ async def test_every_slot_gets_its_own_dish():
 
 
 @pytest.mark.asyncio
+async def test_each_dish_is_passed_on_the_moment_its_slot_keeps_it():
+    """So its photo is made while the next dish is still being written."""
+    model = _Model(["Grilled chicken bowl", "Lemongrass pork", "Steamed fish plate"])
+    heard = []
+
+    week = await generate_week_of_dishes(
+        _requests(3),
+        ask=model.ask,
+        new_id=lambda: "x",
+        on_dish=lambda dish: heard.append((dish, len(model.prompts))),
+        **BUILDERS,
+    )
+
+    assert [dish for dish, _ in heard] == list(week.dishes.values())
+    # The first dish was heard of before the last recipe was even asked for.
+    assert heard[0][1] < heard[-1][1] == len(model.prompts)
+
+
+@pytest.mark.asyncio
+async def test_a_listener_that_fails_does_not_cost_the_week():
+    model = _Model(["Grilled chicken bowl", "Lemongrass pork", "Steamed fish plate"])
+
+    def broken(dish):
+        raise RuntimeError("the photo service is down")
+
+    week = await generate_week_of_dishes(
+        _requests(3), ask=model.ask, new_id=lambda: "x", on_dish=broken, **BUILDERS
+    )
+
+    assert len(week.dishes) == 3
+    assert week.unfilled == ()
+
+
+@pytest.mark.asyncio
 async def test_a_model_that_repeats_itself_does_not_fill_the_week_with_one_meal():
     """The complaint this whole path exists to answer."""
     model = _Model(["Grilled chicken bowl"] * 3)
