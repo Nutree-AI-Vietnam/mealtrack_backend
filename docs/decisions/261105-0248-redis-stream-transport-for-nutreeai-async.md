@@ -15,8 +15,13 @@ Integration events reach `nutreeai_async` like this today:
 committed write -> CloudflareQueuePublisher -> api.cloudflare.com (Queue REST) -> Queue -> Worker
 ```
 
-- Every event is one call to the Cloudflare client API from Render. That API
-  has a global limit of 1,200 requests per 5 minutes per user/token, and going
+- Every event is an HTTPS request from Render to `api.cloudflare.com`, and
+  Render bills that outbound traffic: the 2026 plans include 5 GB (Hobby),
+  25 GB (Pro) or 1 TB (Scale) a month, then $0.15 per GB. The request adds
+  292 bytes of HTTP framing to every event. When a server process has not
+  published for 30 s, it also pays a fresh TLS handshake of about 620 bytes.
+- Every event is one call to the Cloudflare client API. That API has a global
+  limit of 1,200 requests per 5 minutes per user/token, and going
   over it blocks every API call on that token for 5 minutes. When the Queue
   token falls back to `CLOUDFLARE_API_TOKEN`, Queue publishes go out on the
   same token as Workers AI calls.
@@ -119,6 +124,22 @@ stop idle polling. The AI handler must still not run inside `waitUntil()`.
 
 Gains:
 
+- Less outbound traffic per event. Measured bytes sent out of Render
+  (application data plus TLS record):
+
+  | Event | Cloudflare Queue | Redis stream |
+  |---|---|---|
+  | `hydration.created.v1` | 707 B | 415 B |
+  | `meal.created.v1`, typical | 1,771 B | 1,479 B |
+  | `meal.created.v1`, largest | 6,304 B | 6,012 B |
+
+  Add about 620 B per Cloudflare publish after 30 s idle; the Redis connection
+  stays open. The event itself still leaves Render once: Upstash is outside
+  Render, and a stream in Render Key Value read by the Worker on Cloudflare
+  would be billed the same way. The remaining levers are fewer events (drop
+  events whose only Worker job repeats the backend's synchronous cache purge)
+  and smaller ones (deflate plus base64 makes meal events 32–50% smaller).
+  Decide on compression before the Worker consumes the stream.
 - No per-event Cloudflare API call, no shared API rate-limit budget, and no
   Queue credentials on the backend.
 - A publish is one Redis round-trip on a pooled connection instead of an HTTPS
