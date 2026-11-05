@@ -234,6 +234,34 @@ async def test_metadata_only_videos_are_not_analyzed(nutrition):
 
 
 @pytest.mark.asyncio
+async def test_a_blocked_tiktok_with_tiktok_s_transcript_still_gives_a_recipe(
+    nutrition,
+):
+    """The caption only names the dish; the recipe is in what is said."""
+    material = RecipeSourceMaterial(
+        platform=RecipeSourcePlatform.TIKTOK,
+        source_url="https://vt.tiktok.com/ZSp2P9MW7/",
+        canonical_url="https://www.tiktok.com/@lenkycungkhoa/video/1",
+        description="Công thức sườn nướng cơm tấm của mẹ tui",
+        subtitles="mẹ tui ướp cho một kí sườn, đường muối bột ngọt tiêu, mật ong",
+        metadata_only=True,
+    )
+    video = FakeVideo(material=material)
+    extractor = FakeExtractor(results=[NOT_ENOUGH])
+
+    recipe = await _service(
+        video=video, extractor=extractor, nutrition=nutrition
+    ).import_recipe(
+        RecipeImportRequest(language="vi", url="https://vt.tiktok.com/ZSp2P9MW7/")
+    )
+
+    assert video.analyzed == 0
+    assert extractor.materials[0].subtitles == material.subtitles
+    assert recipe.ingredients
+    assert RecipeImportWarning.VIDEO_NOT_ANALYZED in recipe.warnings
+
+
+@pytest.mark.asyncio
 async def test_pasted_text_is_read_as_user_text(nutrition):
     extractor = FakeExtractor(results=[wings_recipe()])
 
