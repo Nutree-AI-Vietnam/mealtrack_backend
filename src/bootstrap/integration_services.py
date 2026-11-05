@@ -14,7 +14,6 @@ from src.domain.ports.play_subscription_port import PlaySubscriptionPort
 from src.infra.adapters.best_effort_integration_event_publisher import (
     BestEffortIntegrationEventPublisher,
 )
-from src.infra.adapters.cloudflare_queue_publisher import CloudflareQueuePublisher
 from src.infra.adapters.google_play_subscription_adapter import (
     GooglePlaySubscriptionAdapter,
 )
@@ -36,18 +35,15 @@ FIREBASE_DELETE_ATTEMPTS = 3
 FIREBASE_DELETE_BACKOFF_SECONDS = 1.0
 
 
-def _build_event_transport() -> IntegrationEventPublisherPort:
-    """Queue to nutreeai_async, or the API process's own handlers once switched."""
-    if get_settings().INTEGRATION_EVENT_TRANSPORT == "in_process":
-        return in_process_event_router
-    return CloudflareQueuePublisher.from_settings()
-
-
 def get_integration_event_publisher() -> IntegrationEventPublisherPort:
-    """Return the process-local event publisher; transport failures must not fail writes."""
+    """Return the process-local event publisher; handler failures never fail writes.
+
+    Events run on background tasks against the handlers this process registers
+    at startup (`src/api/services/in_process_integration_events.py`).
+    """
     global _publisher
     if _publisher is None:
-        _publisher = BestEffortIntegrationEventPublisher(_build_event_transport())
+        _publisher = BestEffortIntegrationEventPublisher(in_process_event_router)
     return _publisher
 
 

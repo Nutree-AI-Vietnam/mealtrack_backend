@@ -57,7 +57,7 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
         Delete user account.
         - Soft delete in database (set is_active=False)
         - Anonymize user data
-        - Emit UserDeletedEvent for out-of-process cleanup (nutreeai_async)
+        - Emit UserDeletedEvent; its background handler deletes the Firebase account
         """
         # Use provided UoW or create default
         uow = self.uow or AsyncUnitOfWork()
@@ -121,7 +121,7 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
                 self.image_store, avatar_image_id, reason="account deleted"
             )
 
-        # Step 4: Emit UserDeletedEvent to async queue for nutreeai_async to perform Firebase cleanup
+        # Step 4: Emit UserDeletedEvent; a background handler deletes the Firebase account
         event = UserDeletedEvent(
             environment=self.environment,
             aggregate_id=str(user_id),

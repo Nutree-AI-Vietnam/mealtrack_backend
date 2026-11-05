@@ -107,21 +107,6 @@ def test_get_allowed_image_hosts_rejects_local_custom_domains(
     )
 
 
-def test_local_insight_hook_not_registered_in_production(monkeypatch):
-    import src.api.base_dependencies as dependencies
-    import src.app.events.meal.meal_events as meal_events
-
-    monkeypatch.setattr(dependencies.settings, "ENVIRONMENT", "production")
-    monkeypatch.setattr(
-        dependencies.settings, "REDIS_URL", "rediss://default:pwd@upstash.io:6379"
-    )
-    meal_events.register_local_insight_hook(None)
-
-    dependencies._register_local_insight_hook()
-
-    assert meal_events._local_insight_hook is None
-
-
 def test_write_cache_hooks_registered_in_production_with_hosted_redis(monkeypatch):
     """Reads after a write must not wait on the Queue worker's purge."""
     import src.api.base_dependencies as dependencies
@@ -183,7 +168,7 @@ async def test_registered_meal_hook_purges_hosted_redis(monkeypatch):
     cache.invalidate_pattern.assert_not_awaited()
 
 
-def test_local_hooks_registered_in_development_with_local_redis(monkeypatch):
+def test_write_cache_hooks_registered_in_development_with_local_redis(monkeypatch):
     import src.api.base_dependencies as dependencies
     import src.app.events.hydration.local_cache_invalidation as hydration_cache
     import src.app.events.meal.meal_events as meal_events
@@ -191,21 +176,17 @@ def test_local_hooks_registered_in_development_with_local_redis(monkeypatch):
 
     monkeypatch.setattr(dependencies.settings, "ENVIRONMENT", "development")
     monkeypatch.setattr(dependencies.settings, "REDIS_URL", "redis://localhost:6379/0")
-    meal_events.register_local_insight_hook(None)
     meal_events.register_local_cache_invalidation_hook(None)
     hydration_cache.register_local_hydration_cache_invalidation_hook(None)
     movement_cache.register_local_movement_cache_invalidation_hook(None)
 
     try:
-        dependencies._register_local_insight_hook()
         dependencies._register_write_cache_invalidation_hooks()
 
-        assert meal_events._local_insight_hook is not None
         assert meal_events._local_cache_invalidation_hook is not None
         assert hydration_cache._local_hydration_cache_invalidation_hook is not None
         assert movement_cache._local_movement_cache_invalidation_hook is not None
     finally:
-        meal_events.register_local_insight_hook(None)
         meal_events.register_local_cache_invalidation_hook(None)
         hydration_cache.register_local_hydration_cache_invalidation_hook(None)
         movement_cache.register_local_movement_cache_invalidation_hook(None)

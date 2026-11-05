@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.api.services import in_process_integration_events as events
-from src.api.services.local_meal_insight_cache import MealInsightEventHandler
+from src.api.services.meal_insight_event_handler import MealInsightEventHandler
 from src.app.events.in_process_event_router import InProcessIntegrationEventRouter
 
 

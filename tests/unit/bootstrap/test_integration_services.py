@@ -14,35 +14,18 @@ from src.bootstrap.integration_services import (
 )
 
 
-def _use_transport(monkeypatch, transport: str) -> object:
-    """Select a transport and stub the Cloudflare one; returns its stand-in."""
-    queue = object()
-    monkeypatch.setattr(
-        "src.bootstrap.integration_services.get_settings",
-        lambda: SimpleNamespace(INTEGRATION_EVENT_TRANSPORT=transport),
-    )
-    monkeypatch.setattr(
-        "src.bootstrap.integration_services.CloudflareQueuePublisher",
-        SimpleNamespace(from_settings=lambda: queue),
-    )
-    return queue
-
-
-def test_integration_event_publisher_is_process_singleton(monkeypatch):
+def test_integration_event_publisher_is_a_process_singleton():
     reset_integration_event_publisher_for_tests()
-    queue = _use_transport(monkeypatch, "cloudflare_queue")
 
     first = get_integration_event_publisher()
     second = get_integration_event_publisher()
 
     assert first is second
-    assert first._inner is queue
     reset_integration_event_publisher_for_tests()
 
 
-def test_in_process_transport_hands_events_to_the_api_process(monkeypatch):
+def test_events_are_handled_in_the_api_process():
     reset_integration_event_publisher_for_tests()
-    _use_transport(monkeypatch, "in_process")
 
     publisher = get_integration_event_publisher()
 

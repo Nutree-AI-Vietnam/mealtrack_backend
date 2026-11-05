@@ -74,7 +74,7 @@ Do not hand-maintain file, LOC, or endpoint counts in this document.
   `external-services.md` and `decisions/260608-2223-selective-cache-admission-policy.md`).
 - Vector cache: active meal-image-name path uses `pgvector`.
 - AI: OpenAI default; optional Cloudflare Workers AI for configured text/vision.
-- Integration events: domain handlers publish versioned `IntegrationEvent` payloads to the required environment-specific Cloudflare Queue, or handle them in the API process when `INTEGRATION_EVENT_TRANSPORT=in_process` (see `docs/decisions/261105-0248-retire-nutreeai-async.md`). The sibling `nutreeai_async` worker invokes registered handlers (cache invalidation, Firebase account cleanup, subscription receipts) and retries on failure. Process-local cron jobs have been completely removed (see `docs/decisions/ADR-cron-jobs-removal.md`).
+- Integration events: domain handlers publish versioned `IntegrationEvent` payloads that the API process handles on background tasks (`src/app/events/in_process_event_router.py`, handlers in `src/api/services/in_process_integration_events.py`): meal value insights, Firebase account cleanup, and profile, cheat-day and saved-suggestion cache purges. They replaced the Cloudflare Queue and the `nutreeai_async` worker (see `docs/decisions/261105-0248-retire-nutreeai-async.md`). Process-local cron jobs have been completely removed (see `docs/decisions/ADR-cron-jobs-removal.md`).
 - Translation: OpenAI-backed read-path localization via
   `src/app/services/food_name_localizer.py` and
   `src/infra/adapters/openai_translation_adapter.py`; Responses API payload

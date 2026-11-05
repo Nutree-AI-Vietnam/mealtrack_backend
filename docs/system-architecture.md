@@ -67,51 +67,32 @@ await event_bus.publish(MealCreatedEvent(...))           # fire-and-forget
 
 Background subscriber tasks are owned by `BackgroundTaskManager` (`src/infra/event_bus/background_task_manager.py`), which replaces bare `asyncio.create_task` in the event bus and routes; it exposes `spawn`, `drain`, and `shutdown` so subscriber failures are observable and app shutdown can cancel outstanding tasks cleanly.
 
-Process-local cron jobs have been completely eliminated (see `docs/decisions/ADR-cron-jobs-removal.md`). Cache invalidation, Firebase account cleanup, and subscription lifecycle dispatch are modeled as versioned `IntegrationEvent` payloads published to Cloudflare Queue and processed asynchronously by `nutreeai_async`. Affiliate attribution remains a separate optional integration.
+Process-local cron jobs have been completely eliminated (see `docs/decisions/ADR-cron-jobs-removal.md`). Follow-up work for committed writes (meal value insights, Firebase account cleanup, profile cache purges) is modeled as versioned `IntegrationEvent` payloads handled on background tasks in the API process. Affiliate attribution remains a separate optional integration.
 
-### Durable Integration Events
+### Integration Events
 
-Mutations (Meal, Hydration, Movement, User Profile/Settings, Cheat Day, Saved Suggestions, Affiliate) use direct asynchronous event dispatch:
+Mutations (Meal, Hydration, Movement, User Profile/Settings, Cheat Day, Saved Suggestions, account deletion, Affiliate) publish their follow-up work as events:
 
-1. Handlers commit their authoritative database transaction, and then publish one versioned `IntegrationEvent` envelope directly to the required environment-specific Cloudflare Queue.
-2. The backend always injects a Queue publisher. Missing account, queue-name, or token configuration is an integration error; mutations do not silently skip publication.
-3. The Cloudflare Worker (`nutreeai_async`) validates the common envelope and its in-process router invokes every registered handler for that event type (e.g. cache invalidation, external API calls).
-4. The Worker ACKs only after all handlers succeed. A failure retries the message with backoff and eventually routes it to the DLQ.
+1. Handlers commit their authoritative database transaction, then publish one versioned `IntegrationEvent` envelope through `BestEffortIntegrationEventPublisher`, which runs it on a background task. A failure is logged and never fails the write.
+2. `InProcessIntegrationEventRouter` (`src/app/events/in_process_event_router.py`) runs every handler registered for the event type; a failing handler does not skip the others. `src/api/services/in_process_integration_events.py` registers them at startup.
+3. Meal events generate meal value insights. Account deletion events delete the Firebase account: three attempts, then the UID is logged at ERROR for `scripts/delete_missed_firebase_accounts.py`. Profile, cheat-day and saved-suggestion events purge their caches. Meal, hydration and movement day caches are purged on the write path before the response, so those events need nothing more.
+4. Shutdown drains in-flight handlers for up to 5 s; work still running after that is dropped.
 
-`INTEGRATION_EVENT_TRANSPORT=in_process` replaces the Queue and the worker:
-the API process handles its own events on background tasks, generating meal
-value insights, deleting Firebase accounts and purging profile, cheat-day and
-saved-suggestion caches. The default stays `cloudflare_queue` until the switch;
-the worker is then retired:
+These handlers replaced the Cloudflare Queue and the `nutreeai_async` worker:
 [`decisions/261105-0248-retire-nutreeai-async.md`](decisions/261105-0248-retire-nutreeai-async.md).
 
-This MVP accepts the post-commit Queue loss window for hydration. If the SQL
-transaction commits and the direct publish fails before Cloudflare accepts the
-message, the hydration row remains durable but the integration event can be
-lost. There is no automatic transactional fallback for that hydration publish.
-
-Handlers are intentionally in code for the MVP. This path does not use HMAC,
-local-vs-Cloudflare dual routing, percentage canaries, cache-value writes, D1
-delivery state, or dynamic subscriptions. Separate staging and production
-deployments use separate ingress queues and environment values.
-
-The Worker has cache-invalidation, insight, recommendation, Firebase cleanup,
-and subscription-receipt handlers. Notification and email handlers are
-intentionally out of scope. Live staging proof remains pending.
+Meal value insights use the committed `meal.created.v1` / `meal.updated.v1`
+event and its bounded `data.insight` snapshot. The handler clears the stored
+insight and records the event's revision (`occurred_at`), generates with AI,
+and writes `meal_insight:{meal_id}` only if no newer revision exists;
+`meal.deleted.v1` clears it. The backend insight reader never calls AI. When
+`GET /v1/meals/{meal_id}/value-insights` misses for a READY meal logged 2
+minutes to 7 days ago, it re-publishes the meal's `meal.updated.v1` event once
+per 10 minutes (`src/app/services/meal_insight_recovery.py`), so a lost
+generation does not leave the meal without insights.
 
 Queries may still read Redis as an optimization on the read path. Existing
-cache-aside population behavior is unchanged; the Worker owns deletes for the
-generic compatibility cache path. Meal value insights use the same committed
-`meal.created.v1` / `meal.updated.v1` event as cache invalidation. When the
-event contains its bounded `data.insight` snapshot, the Worker fans it out to
-the cache invalidation handler and the meal insight business handler. The
-business handler owns AI generation and writes the validated result to
-`meal_insight:{meal_id}` before ACK, while the backend insight reader never
-calls AI. When `GET /v1/meals/{meal_id}/value-insights` misses for a READY meal
-logged 2 minutes to 7 days ago, it re-publishes the meal's `meal.updated.v1`
-event once per 10 minutes (`src/app/services/meal_insight_recovery.py`), so a
-lost publish or an event past Queue retention does not leave the meal without
-insights.
+cache-aside population behavior is unchanged.
 
 ### Repository Pattern
 Async SQLAlchemy repositories are accessed through `AsyncUnitOfWork`. The UoW owns commit/rollback boundaries; repositories flush only when generated IDs or relationship state are needed.
@@ -372,10 +353,10 @@ the [catalog rollout runbook](./runbooks/meal-catalog-release.md#weekly-planner-
 2. Route creates `UploadMealImageImmediatelyCommand`.
 3. `EventBus.send()` calls `UploadMealImageImmediatelyHandler`.
 4. Handler uploads to Cloudinary, runs `VisionAIService`, parses nutrition, and persists a READY `Meal(source="scanner")` with **no hydration side effects**.
-5. If `AI_MEAL_ANALYZE_GRAPH_ENABLED=true`, the handler enters `MealAnalyzeWorkflow`; the app-layer graph owns image acquisition, vision parsing, persistence, generic cache invalidation publication, and Worker insight-event publication.
+5. If `AI_MEAL_ANALYZE_GRAPH_ENABLED=true`, the handler enters `MealAnalyzeWorkflow`; the app-layer graph owns image acquisition, vision parsing, persistence, and meal integration-event publication (cache purge and insight generation).
 6. If `AI_MEAL_SCAN_REFERENCE_GROUNDING_ENABLED=true`, scan items take macros from the shared cascade (local food reference, then FatSecret, otherwise the vision estimate). A provider timeout keeps the vision macros as `ai_estimate`. If that flag is off and `AI_MEAL_ANALYZE_FATSECRET_VALIDATION_ENABLED=true`, the older closeness audit may still run after meal creation and does not replace macros. Provider timeout or mismatch keeps the original meal result.
    `AI_SCAN_FULL_MICROS_ENABLED=true` (default off) asks photo, label and text logging for all 21 micronutrient keys instead of ten (`src/domain/model/ai/full_micros_contracts.py`, `SystemPrompts.with_full_micros`); off sends today's ten-key contract and prompts unchanged. Parsers always accept the 21-key superset, and a missing key stays unknown.
-7. Meal value insight publication is best-effort after persistence. The Worker generates and caches the result under `meal_insight:{meal_id}`; the backend only reads that cache, re-requests an overdue insight from the status endpoint, and never blocks the READY meal response on AI completion.
+7. Meal value insight publication is best-effort after persistence. A background handler generates and caches the result under `meal_insight:{meal_id}`; the read path only reads that cache, re-requests an overdue insight from the status endpoint, and never blocks the READY meal response on AI completion.
 8. Handler returns `DetailedMealResponse` synchronously.
 
 `POST /v1/meals/scan-by-url` follows the same synchronous workflow after

@@ -1,19 +1,16 @@
-"""Generate meal value insights in the API process.
+"""Generate a meal's value insights in the API process from its integration event.
 
-`MealInsightEventHandler` handles meal integration events when
-``INTEGRATION_EVENT_TRANSPORT=in_process``, in every environment.
-`LocalMealInsightWriter` fills keys in local Docker Redis for development
-while events still go to the Queue.
+The app reads them from ``meal_insight:{meal_id}`` through
+`MealValueInsightService`; `meal_insight_recovery` re-publishes the event when
+an insight is overdue.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlparse
 
 from src.app.events.meal.meal_insight_snapshot import insight_language_name
 from src.domain.model.ai.model_purpose import ModelPurpose
@@ -29,81 +26,6 @@ MEAL_INSIGHT_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
 # The revision outlives the insight so a late write cannot revive a cleared one.
 MEAL_INSIGHT_FENCE_TTL_SECONDS = 8 * 24 * 60 * 60
 MEAL_DELETED_EVENT = "meal.deleted.v1"
-_LOCAL_REDIS_HOSTS = {"localhost", "127.0.0.1", "::1", "mealtrack_redis"}
-
-
-def redis_url_is_local(redis_url: str) -> bool:
-    """Return True when Redis is the local Docker instance, not hosted Upstash."""
-    host = (urlparse(redis_url).hostname or "").lower()
-    return host in _LOCAL_REDIS_HOSTS
-
-
-class LocalMealInsightWriter:
-    """Generate Worker-shaped insights and write them to local Redis."""
-
-    def __init__(
-        self,
-        cache_getter: Callable[[], Any],
-        ai_getter: Callable[[], Any],
-    ) -> None:
-        self._cache_getter = cache_getter
-        self._ai_getter = ai_getter
-
-    def schedule(
-        self,
-        meal_id: str,
-        insight: dict[str, Any],
-        occurred_at: datetime,
-    ) -> None:
-        """Start background generation; never block the meal write response."""
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return
-        task = loop.create_task(self._write(meal_id, insight, occurred_at))
-        task.add_done_callback(_log_background_failure)
-
-    async def _write(
-        self,
-        meal_id: str,
-        insight: dict[str, Any],
-        occurred_at: datetime,
-    ) -> None:
-        cache = self._cache_getter()
-        if cache is None or not getattr(cache, "enabled", True):
-            return
-        redis_url = getattr(getattr(cache, "redis", None), "_redis_url", "")
-        if not redis_url_is_local(str(redis_url)):
-            return
-        try:
-            raw = await self._ai_getter().generate(
-                purpose=ModelPurpose.GENERAL,
-                prompt=_build_prompt(insight),
-                system_message=_system_prompt(insight.get("language")),
-                response_type="json",
-                max_tokens=1200,
-            )
-        except Exception:
-            logger.info(
-                "local meal insight generation failed meal_id=%s",
-                meal_id,
-                exc_info=True,
-            )
-            return
-        parsed = parse_ai_result(raw)
-        if parsed is None:
-            logger.info("local meal insight payload invalid meal_id=%s", meal_id)
-            return
-        await cache.set_json(
-            MealValueInsightService.cache_key_for_meal(meal_id),
-            serialize_insights(parsed),
-            MEAL_INSIGHT_CACHE_TTL_SECONDS,
-        )
-        logger.info(
-            "local meal insight cached meal_id=%s occurred_at=%s",
-            meal_id,
-            occurred_at.isoformat(),
-        )
 
 
 class MealInsightEventHandler:
@@ -242,11 +164,3 @@ def _build_prompt(insight: dict[str, Any]) -> str:
         '"highlights":["..."]}]}\n\n'
         f"Meal:\n{summary}"
     )
-
-
-def _log_background_failure(task: asyncio.Task[Any]) -> None:
-    if task.cancelled():
-        return
-    error = task.exception()
-    if error is not None:
-        logger.info("local meal insight task failed error=%s", type(error).__name__)

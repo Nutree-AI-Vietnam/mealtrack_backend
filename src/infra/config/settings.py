@@ -5,7 +5,7 @@ Application configuration settings loaded from environment variables.
 import json
 from datetime import date
 from functools import lru_cache
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -129,23 +129,6 @@ class Settings(BaseSettings):
     # Cache configuration
     CACHE_ENABLED: bool = Field(default=True)
     CACHE_DEFAULT_TTL: int = Field(default=3600)  # 1 hour
-
-    # Cloudflare Queue integration is required for asynchronous side effects.
-    CLOUDFLARE_QUEUE_ACCOUNT_ID: str = Field(default="")
-    CLOUDFLARE_QUEUE_ID: str = Field(default="")
-    # Worker/Wrangler configuration uses the human-readable queue name. The
-    # backend REST publisher uses CLOUDFLARE_QUEUE_ID instead.
-    CLOUDFLARE_QUEUE_NAME: str = Field(default="")
-    CLOUDFLARE_QUEUE_API_TOKEN: str = Field(default="")
-    CLOUDFLARE_QUEUE_TIMEOUT_SECONDS: float = Field(default=3.0, gt=0)
-
-    # Where integration events go. "in_process" handles them inside the API
-    # process (meal insights, Firebase account deletion, profile cache purges)
-    # instead of the Cloudflare Queue and the nutreeai_async worker:
-    # docs/decisions/261105-0248-retire-nutreeai-async.md
-    INTEGRATION_EVENT_TRANSPORT: Literal["cloudflare_queue", "in_process"] = Field(
-        default="cloudflare_queue"
-    )
 
     # Firebase
     FIREBASE_CREDENTIALS: str | None = Field(default=None)

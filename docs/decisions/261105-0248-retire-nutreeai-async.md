@@ -1,10 +1,10 @@
 # Decision: Retire nutreeai_async and handle integration events in the API process
 
-**Status:** Accepted. Backend implemented behind `INTEGRATION_EVENT_TRANSPORT=in_process`.
+**Status:** Accepted and implemented. The API process handles every integration event; the Cloudflare Queue publisher is removed.
 
 **Date:** 2026-11-05
 
-**Supersedes (once switched):** the Cloudflare Queue ingress in
+**Supersedes:** the Cloudflare Queue ingress in
 [260822-1631-cloudflare-async-cache-worker-proposal.md](./260822-1631-cloudflare-async-cache-worker-proposal.md)
 
 ## Context
@@ -42,13 +42,12 @@ stale and every hydration and recommendation event has failed and retried.
 
 ## Decision
 
-With `INTEGRATION_EVENT_TRANSPORT=in_process`, the best-effort publisher hands
-each event to `InProcessIntegrationEventRouter`
-(`src/app/events/in_process_event_router.py`) instead of the Queue. The
-publisher already runs every publish on a background task and drains them at
-shutdown, so handlers never delay or fail a write. No new service is needed.
-Handlers are registered at startup by
-`src/api/services/in_process_integration_events.py`:
+The best-effort publisher hands each event to `InProcessIntegrationEventRouter`
+(`src/app/events/in_process_event_router.py`) instead of the Queue. It
+already ran every publish on a background task and drains them at shutdown,
+so handlers never delay or fail a write. No new service is needed. Handlers
+are registered at startup by `src/api/services/in_process_integration_events.py`,
+whether or not Redis came up:
 
 | Event types | Handler |
 |---|---|
@@ -68,8 +67,8 @@ its 8 patterns, where the default would need about 4,000.
 ### Meal insights
 
 - Generated with the backend's insight prompt (output language and
-  micronutrient rules included) and validated by `parse_ai_result`, as the
-  development-only `LocalMealInsightWriter` already did.
+  micronutrient rules included) and validated by `parse_ai_result`. This
+  replaces the development-only local writer, which is removed.
 - Fenced by revision: the event's `occurred_at` in milliseconds, stored at
   `meal_insight:{meal_id}:__revision`. Each event first clears the insight and
   records its revision (`CacheService.invalidate_with_revision`), then writes
@@ -88,17 +87,18 @@ deleted. After the last failure the UID is logged at ERROR so
 
 ## Rollout
 
-1. Merge. Nothing changes: the default stays `cloudflare_queue`.
-2. On `nutree_backend`, set `INTEGRATION_EVENT_TRANSPORT=in_process` and
-   redeploy. Check the startup log `Integration events handled in-process`,
-   then: a logged meal's value insights appear within about a minute; a test
-   account deletion logs `Firebase account cleanup completed`; a profile
-   change refreshes targets.
-3. Roll back by setting `cloudflare_queue`; the worker is still running.
-4. After a stable week: suspend `nutreeai_async` on Render, delete the
-   Cloudflare Queue and its DLQ, then remove `CloudflareQueuePublisher`, the
-   `CLOUDFLARE_QUEUE_*` settings and this switch, leaving in-process handling
-   as the only path.
+1. Merge and deploy `nutree_backend`. From that deploy on, the backend stops
+   publishing to the Cloudflare Queue and handles its events itself.
+2. Check the startup log `Integration events handled in-process`, then: a
+   logged meal's value insights appear within about a minute; a test account
+   deletion logs `Firebase account cleanup completed`; a profile change
+   refreshes targets.
+3. To roll back, redeploy the previous build on Render. Keep `nutreeai_async`
+   running until this deploy has proved itself, so the previous build still
+   has its consumer.
+4. Then suspend `nutreeai_async` on Render, delete the Cloudflare Queue and its
+   DLQ, remove the `CLOUDFLARE_QUEUE_*` variables from the Render services, and
+   archive the `nutreeai_async` repository.
 
 ## Consequences
 

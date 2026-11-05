@@ -151,10 +151,9 @@ async with AsyncUnitOfWork() as uow:
 ### Cache Work Is Outside the Business Critical Path
 
 The database transaction is authoritative for command completion. After the
-unit of work commits, mutation handlers publish cache invalidation or
-integration events directly to the configured transport (the Cloudflare Queue,
-or this process's own handlers when `INTEGRATION_EVENT_TRANSPORT=in_process`); they do not
-wait on Redis maintenance. This applies to meal, hydration, movement, and derived
+unit of work commits, mutation handlers purge their own day caches and
+publish integration events, whose follow-up work runs on background tasks in
+this process; they do not wait on it. This applies to meal, hydration, movement, and derived
 macro/budget projections.
 
 Query handlers may read Redis first. A cache miss falls back to SQL, and the

@@ -1,10 +1,10 @@
-"""Run integration events inside the API process instead of a Queue worker.
+"""Run integration events inside the API process.
 
-With ``INTEGRATION_EVENT_TRANSPORT=in_process`` the publisher hands each
-committed event to the handlers registered here for its ``event_type``. The
-best-effort publisher already runs every publish on its own background task
-and drains them at shutdown, so handlers never delay or fail the write. Event
-types with no handler need no follow-up work: the write path did it already.
+The publisher hands each committed event to the handlers registered here for
+its ``event_type``. The best-effort publisher runs every publish on its own
+background task and drains them at shutdown, so handlers never delay or fail
+the write. Event types with no handler need no follow-up work: the write path
+did it already.
 """
 
 from __future__ import annotations

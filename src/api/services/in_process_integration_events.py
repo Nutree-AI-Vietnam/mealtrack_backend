@@ -1,7 +1,6 @@
 """Handle the backend's integration events in the API process.
 
-With ``INTEGRATION_EVENT_TRANSPORT=in_process`` these handlers replace the
-nutreeai_async worker:
+These handlers replaced the retired nutreeai_async worker and Cloudflare Queue:
 
 - ``meal.created/updated/deleted.v1``: meal value insights.
 - ``user.deleted.v1`` / ``user.account_cleanup.v1``: Firebase account deletion.
@@ -21,7 +20,7 @@ from collections.abc import Awaitable, Callable
 from datetime import date
 from typing import Any
 
-from src.api.services.local_meal_insight_cache import MealInsightEventHandler
+from src.api.services.meal_insight_event_handler import MealInsightEventHandler
 from src.api.services.write_cache_invalidation import (
     apply_cheat_day_cache_invalidation,
     apply_profile_cache_invalidation,

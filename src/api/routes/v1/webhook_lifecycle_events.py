@@ -1,4 +1,4 @@
-"""Subscription lifecycle events for the affiliate service and Cloudflare Queues.
+"""Subscription lifecycle events for the affiliate service and the event publisher.
 
 Each RevenueCat store event is reported as ``subscription.lifecycle.v1`` with
 the provider event id mapped to a stable UUID, so a redelivered webhook
@@ -23,7 +23,7 @@ async def publish_subscription_event(
     event_id: str | None,
     user_id: str,
 ) -> None:
-    """Publish a subscription lifecycle event to Cloudflare Queues."""
+    """Publish a subscription lifecycle event."""
     event = SubscriptionLifecycleEvent(
         event_id=subscription_event_id(event_id),
         environment=os.getenv("ENVIRONMENT", "development"),
@@ -51,7 +51,7 @@ async def notify_affiliate(
     event_publisher: Any = None,
     user_id: str | None = None,
 ) -> None:
-    """Publish subscription event to Cloudflare Queue or send affiliate notification."""
+    """Publish the subscription event, or send the affiliate notification."""
     if user_id is not None:
         await publish_subscription_event(
             require_event_publisher(event_publisher),
