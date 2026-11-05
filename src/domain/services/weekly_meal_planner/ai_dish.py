@@ -17,6 +17,7 @@ this says whether the week may keep it.
 
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 import uuid
@@ -59,10 +60,21 @@ MIN_DISH_STEPS = 1
 # disagree with each other. Measured over eighteen priced dishes, most
 # landed between 100% and 140% of target; the band keeps those and turns
 # away the 167%, 178% and 234% outliers that wrecked the day totals.
-MIN_TARGET_SHARE = 0.6
-MAX_TARGET_SHARE = 1.5
+# How far from its slot's target a dish may land and still be taken without
+# looking for a better one. A day is three slots, so three dishes each a
+# sixth short is a day a sixth short: staging's first real week came to
+# 1562 kcal against 2024 with every slot inside the old 0.6-1.5 band and
+# not one of them flagged. The band is deliberately tight because missing
+# it is only ever a soft reason - it buys one more name, never an empty
+# slot, and the closest dish seen is kept when the names run out.
+MIN_TARGET_SHARE = 0.85
+MAX_TARGET_SHARE = 1.25
 # Reasons worth another name but never worth an empty slot.
-SOFT_REASONS = ("OFF_TARGET_CALORIES", "SAME_PROTEIN_TODAY")
+SOFT_REASONS = (
+    "OFF_TARGET_CALORIES",
+    "SAME_PROTEIN_TODAY",
+    "SAME_FLAVOUR_TODAY",
+)
 
 
 @dataclass(frozen=True)
@@ -477,6 +489,69 @@ def protein_of_name(name: str) -> str:
     return next((PROTEIN_WORDS[word] for word in words if word in PROTEIN_WORDS), "")
 
 
+# Seasoning bases a dish is named after. The protein rule reads a day as
+# varied when its three meals are pork, beef and shrimp - and staging's
+# first real week opened with "Chả giò bơ", "Bít tết bơ tỏi" and "Tôm rang
+# bơ tỏi", three proteins and one taste, which is not a day anybody wants
+# to eat. Phrases are matched whole because their parts are not safe on
+# their own: "me" is a substring of half the language.
+_FLAVOUR_PHRASES = (
+    "cà ri",
+    "xì dầu",
+    "đậu phộng",
+    "sốt vang",
+    "phô mai",
+    "sốt me",
+)
+_FLAVOUR_WORDS = frozenset(
+    {
+        "bơ",
+        "butter",
+        "tỏi",
+        "garlic",
+        "sả",
+        "lemongrass",
+        "nghệ",
+        "turmeric",
+        "curry",
+        "dừa",
+        "coconut",
+        "gừng",
+        "ginger",
+        "ớt",
+        "chili",
+        "chua",
+        "sour",
+        "cay",
+        "spicy",
+        "mè",
+        "sesame",
+        "kho",
+        "rim",
+        "cheese",
+        "peanut",
+        "tamarind",
+    }
+)
+
+
+def flavours_of_name(name: str) -> frozenset[str]:
+    """The seasoning bases this dish name claims, or nothing when it is plain."""
+    folded = str(name or "").casefold()
+    words = set(re.split(r"[^\w]+", folded, flags=re.UNICODE))
+    found = {word for word in words if word in _FLAVOUR_WORDS}
+    found.update(phrase for phrase in _FLAVOUR_PHRASES if phrase in folded)
+    return frozenset(found)
+
+
+def _flavours_eaten(names: tuple[str, ...]) -> frozenset[str]:
+    """Every seasoning base the day has had already."""
+    found: set[str] = set()
+    for name in names:
+        found.update(flavours_of_name(name))
+    return frozenset(found)
+
+
 def main_protein(snapshot: SavedRecipeSnapshot) -> str:
     """What this dish is built on, or "" when nothing stands out.
 
@@ -570,7 +645,9 @@ def _day_so_far_block(eaten: tuple[str, ...]) -> str:
         return ""
     return (
         f"\nEarlier today this person eats: {', '.join(usable)}."
-        "\nBuild this meal on a different main protein."
+        "\nBuild this meal on a different main protein, and do not season it"
+        " the same way: where a dish above is garlic-butter, sweet-and-sour,"
+        " lemongrass, curry, coconut or ginger, this one is not."
     )
 
 
@@ -872,6 +949,15 @@ async def _dish_for_slot(
         rejected.append(RejectedDish(name=names[0], reasons=("ALREADY_IN_THE_WEEK",)))
         return None
     attempt, budget, bonus = 0, MAX_DISH_ATTEMPTS, PROTEIN_RETRY_BONUS
+    flavours_today = _flavours_eaten(eaten_today)
+    # The best dish turned away so far, by how far it sat from the slot's
+    # target. Every soft reason means a better dish may exist, not that this
+    # one is unusable, so the closest one seen is kept rather than the last
+    # one tried - and a slot that runs out of names or attempts still gets
+    # a dish instead of a hole.
+    closest: SavedRecipeSnapshot | None = None
+    closest_name: str | None = None
+    closest_miss = math.inf
     while attempt < budget:
         name = candidates[attempt] if attempt < len(candidates) else None
         prompt = build_recipe_prompt(
@@ -936,25 +1022,57 @@ async def _dish_for_slot(
         if hard:
             rejected.append(RejectedDish(name=snapshot.name, reasons=reasons))
             continue
-        soft = reasons or (
-            (f"SAME_PROTEIN_TODAY_{main_protein(snapshot).upper()}",)
-            if _repeats_today(snapshot, proteins_today)
-            else ()
-        )
-        if soft and attempt < len(candidates):
-            budget += bonus
-            bonus = 0
+        soft = reasons or _repeats_the_day(snapshot, proteins_today, flavours_today)
+        if soft:
+            miss = _target_miss(snapshot, request.target_calories)
+            # Ties go to the later try, which is the one a shorter budget
+            # would have ended on: this only ever moves a slot closer to
+            # its target, never away from the dish it used to get.
+            if miss <= closest_miss:
+                closest, closest_name, closest_miss = snapshot, name, miss
             rejected.append(RejectedDish(name=snapshot.name, reasons=soft))
-            continue
+            if attempt < len(candidates):
+                budget += bonus
+                bonus = 0
+                continue
+            # No name left to try. Asking again with none invites the model
+            # to invent a fourth dish nobody picked, and costs a call to do
+            # it; the closest of the ones already cooked is better.
+            break
         if name:
             used.add(dish_key(name))
         return snapshot
+    if closest is not None:
+        # It goes in a slot, so it was not turned away after all: leaving it
+        # in ``rejected`` would report the week's own dinner as a dish the
+        # week refused.
+        for entry in reversed(rejected):
+            if entry.name == closest.name:
+                rejected.remove(entry)
+                break
+        if closest_name:
+            used.add(dish_key(closest_name))
+        return closest
     return None
 
 
-def _repeats_today(
-    snapshot: SavedRecipeSnapshot, proteins_today: frozenset[str]
-) -> bool:
-    """Whether this dish eats again what the day has already eaten."""
+def _repeats_the_day(
+    snapshot: SavedRecipeSnapshot,
+    proteins_today: frozenset[str],
+    flavours_today: frozenset[str],
+) -> tuple[str, ...]:
+    """What this dish eats again that the day has already had, if anything."""
     protein = main_protein(snapshot)
-    return bool(protein) and protein in proteins_today
+    if protein and protein in proteins_today:
+        return (f"SAME_PROTEIN_TODAY_{protein.upper()}",)
+    repeated = sorted(flavours_of_name(snapshot.name) & flavours_today)
+    if repeated:
+        return (f"SAME_FLAVOUR_TODAY_{repeated[0].upper()}",)
+    return ()
+
+
+def _target_miss(snapshot: SavedRecipeSnapshot, target_calories: int) -> float:
+    """How far this dish sits from what its slot asked for, as a share."""
+    if not target_calories or target_calories <= 0:
+        return 0.0
+    return abs(float(snapshot.calories) / float(target_calories) - 1.0)
