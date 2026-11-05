@@ -141,6 +141,34 @@ rg -n "in-process integration event handler failed|meal insight generated|Fireba
 
 ---
 
+### Backend Memory Climbs Between Deploys
+
+**Problem:** Render memory for `nutree_backend` rises after each deploy:
+before worker recycling it went from 0.95 GB to 1.94 GB in six days, against
+a 2 GiB (2.15 GB) limit. It jumps on the first day and then slows, which is
+Python and glibc keeping their memory high-water mark rather than a leak that
+grows with every request.
+
+**What bounds it:**
+1. `docker-entrypoint.sh` restarts each worker after
+   `WORKER_MAX_REQUESTS` (50,000) plus up to `WORKER_MAX_REQUESTS_JITTER`
+   (25,000) requests, about once a day per worker today. The supervisor starts
+   a replacement at once; the restart costs about 4 s of CPU (app import) and
+   can drop a request or two that raced a closing keep-alive connection.
+   Look for `Maximum request limit of ... exceeded` in the logs.
+2. The image sets `MALLOC_ARENA_MAX=2`, which stops each thread from keeping
+   its own malloc arena.
+
+**Solutions:**
+1. Memory still near the limit: lower `WORKER_MAX_REQUESTS`, or move to a
+   plan with more memory.
+2. Restarts hurt more than the memory: raise `WORKER_MAX_REQUESTS`, or set it
+   to `0` and deploy at least weekly.
+3. Never set `UVICORN_LIMIT_MAX_REQUESTS`: uvicorn reads it directly, and a
+   value of `0` makes every worker exit at once.
+
+---
+
 ### Slow Database Queries
 
 **Problem:** `[SLOW_REQUEST_DETECTED >1s]` in logs
@@ -149,6 +177,11 @@ rg -n "in-process integration event handler failed|meal insight generated|Fireba
 ```bash
 SQLALCHEMY_ECHO=true uvicorn src.api.main:app --reload
 ```
+On production, `pg_stat_statements` is enabled on Neon (since 2026-11-05):
+rank statements by `total_exec_time` there before guessing. Its counters
+reset when the compute restarts, while `pg_stat_user_tables` counts since
+2026-04-13, so a high `seq_scan` total there can be old history; compare two
+readings a few minutes apart.
 
 **Solutions:**
 1. Add indexes on frequently filtered columns

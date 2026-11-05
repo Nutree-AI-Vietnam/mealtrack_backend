@@ -69,6 +69,11 @@ ENV GIT_SHA=${GIT_SHA}
 # Default worker count. Override with UVICORN_WORKERS on Render.
 ENV UVICORN_WORKERS=1
 
+# glibc gives each thread its own malloc arena and rarely returns freed
+# memory, so a worker with thread pools (Firebase, executors) keeps growing.
+# Two arenas cap that fragmentation at a small cost under heavy contention.
+ENV MALLOC_ARENA_MAX=2
+
 # Health check uses PORT at runtime. The entrypoint defaults to 8000 locally
 # and 10000 on Render when PORT is not explicitly set.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
