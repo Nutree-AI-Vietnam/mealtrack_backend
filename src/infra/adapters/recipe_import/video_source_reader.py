@@ -2,8 +2,9 @@
 
 yt-dlp gives the caption, thumbnail, duration and subtitle tracks. When the
 platform refuses yt-dlp, the YouTube Data API (with a key) gives a YouTube
-video's full description; otherwise oEmbed (TikTok, YouTube) and the page's
-Open Graph tags still carry the caption of most public posts.
+video's full description, and a TikTok page still embeds its post with
+TikTok's transcript of the speech; otherwise oEmbed and the page's Open
+Graph tags still carry the caption of most public posts.
 """
 
 from __future__ import annotations
@@ -31,8 +32,20 @@ from src.domain.model.recipe_import.source_material import (
 )
 from src.domain.model.recipe_import.text import clean_text
 from src.infra.adapters.recipe_import.safe_fetch import SafeHttpFetcher
+from src.infra.adapters.recipe_import.tiktok_page import (
+    TikTokPost,
+    choose_tiktok_subtitle,
+    is_tiktok_url,
+    tiktok_post,
+    without_query,
+)
 from src.infra.adapters.recipe_import.video_media_analyzer import VideoMediaAnalyzer
-from src.infra.adapters.recipe_import.web_page_reader import WebRecipePageReader
+from src.infra.adapters.recipe_import.web_page_reader import (
+    HTML_ACCEPT,
+    HTML_TYPES,
+    MAX_HTML_BYTES,
+    WebRecipePageReader,
+)
 from src.infra.adapters.recipe_import.youtube_data_api import YouTubeDataApi
 from src.infra.adapters.recipe_import.ytdlp_support import (
     choose_subtitle_track,
@@ -45,6 +58,8 @@ from src.infra.adapters.recipe_import.ytdlp_support import (
 logger = logging.getLogger(__name__)
 
 MAX_SUBTITLE_BYTES = 2 * 1024 * 1024
+# TikTok's CDN labels its WebVTT files video/mp4; the body is checked instead.
+_TIKTOK_SUBTITLE_TYPES = ("text/", "application/", "video/mp4")
 _OEMBED = {
     RecipeSourcePlatform.TIKTOK: "https://www.tiktok.com/oembed?url={url}",
     RecipeSourcePlatform.YOUTUBE: "https://www.youtube.com/oembed?format=json&url={url}",
@@ -92,7 +107,7 @@ class VideoRecipeSourceReader:
                 platform.value,
                 failure.code,
             )
-            fallback = await self._fallback(url, platform)
+            fallback = await self._fallback(url, platform, language)
             if fallback is not None:
                 return fallback
             raise failure from exc
@@ -153,7 +168,7 @@ class VideoRecipeSourceReader:
         )
 
     async def _fallback(
-        self, url: str, platform: RecipeSourcePlatform
+        self, url: str, platform: RecipeSourcePlatform, language: str
     ) -> RecipeSourceMaterial | None:
         video_id = (
             youtube_video_id(url) if platform == RecipeSourcePlatform.YOUTUBE else None
@@ -162,6 +177,10 @@ class VideoRecipeSourceReader:
             material = await self._youtube_api.read_video(video_id)
             if material is not None and material.description:
                 return replace(material, source_url=url)
+        if platform == RecipeSourcePlatform.TIKTOK:
+            post = await self._tiktok_post(url, language)
+            if post is not None:
+                return post
         oembed = await self._oembed(url, platform)
         try:
             page = await self._pages.read(url, platform=platform)
@@ -169,7 +188,7 @@ class VideoRecipeSourceReader:
             page = None
         title = (oembed or {}).get("title")
         caption = page.description if page else None
-        # TikTok's oEmbed title is the full caption; prefer the longer text.
+        # An oEmbed title can be the full caption; prefer the longer text.
         if isinstance(title, str) and len(title) > len(caption or ""):
             caption = title
         if not caption and not (page and page.structured_recipe):
@@ -191,6 +210,74 @@ class VideoRecipeSourceReader:
             or (page.image_url if page else None),
             structured_recipe=page.structured_recipe if page else None,
             metadata_only=True,
+        )
+
+    async def _tiktok_post(
+        self, url: str, language: str
+    ) -> RecipeSourceMaterial | None:
+        """The post as TikTok's own page embeds it, with TikTok's transcript.
+
+        The video itself still could not be opened, so the material stays
+        ``metadata_only`` and is never sent for media analysis.
+        """
+        try:
+            page = await self._fetcher.get(
+                url,
+                max_bytes=MAX_HTML_BYTES,
+                accept=HTML_ACCEPT,
+                allowed_types=HTML_TYPES,
+                truncate_oversized=True,
+            )
+        except RecipeImportError as exc:
+            logger.info("TikTok page unavailable: code=%s", exc.code)
+            return None
+        post = tiktok_post(page.text()) if is_tiktok_url(page.url) else None
+        if post is None:
+            # A few hundred bytes is TikTok's bot check; a full page is a
+            # removed or private post.
+            logger.info("TikTok page embeds no post: bytes=%d", len(page.body))
+            return None
+        subtitles = await self._tiktok_subtitles(post, language)
+        if not (post.caption or subtitles):
+            return None
+        return RecipeSourceMaterial(
+            platform=RecipeSourcePlatform.TIKTOK,
+            source_url=url,
+            canonical_url=without_query(page.url),
+            title=clean_text(post.caption, max_chars=MAX_NAME_CHARS),
+            description=clean_text(
+                post.caption, max_chars=MAX_CAPTION_CHARS, multiline=True
+            ),
+            author=clean_text(post.author, max_chars=MAX_LABEL_CHARS),
+            image_url=post.cover_url,
+            subtitles=subtitles,
+            duration_seconds=post.duration_seconds,
+            metadata_only=True,
+        )
+
+    async def _tiktok_subtitles(self, post: TikTokPost, language: str) -> str | None:
+        track = choose_tiktok_subtitle(post, language)
+        if track is None:
+            return None
+        try:
+            resource = await self._fetcher.get(
+                track.url,
+                max_bytes=MAX_SUBTITLE_BYTES,
+                accept="*/*",
+                allowed_types=_TIKTOK_SUBTITLE_TYPES,
+                truncate_oversized=True,
+            )
+        except RecipeImportError as exc:
+            logger.info("TikTok subtitles skipped: code=%s", exc.code)
+            return None
+        body = resource.text().lstrip("\ufeff").lstrip()
+        if not body.startswith("WEBVTT"):
+            logger.info("TikTok subtitles skipped: not WebVTT")
+            return None
+        return clean_text(
+            subtitle_text(body, "vtt"),
+            max_chars=MAX_SUBTITLE_CHARS,
+            multiline=True,
         )
 
     async def _oembed(
