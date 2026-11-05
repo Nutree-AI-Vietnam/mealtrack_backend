@@ -3,6 +3,7 @@
 Every API process enqueues and observes jobs. Processes with
 ``AI_JOBS_WORKER_ENABLED`` also run the worker lanes and the push notifier;
 the worker drains queued jobs even while ``AI_JOBS_ENABLED`` stops new ones.
+Short jobs and long jobs run in separate lanes with separate global caps.
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ from src.app.services.ai_jobs.describe_executor import DescribeJobExecutor, ToRe
 from src.app.services.ai_jobs.executors import AiJobExecutor, Send
 from src.app.services.ai_jobs.weekly_plan_executor import WeeklyPlanJobExecutor
 from src.app.services.chat_turn_orchestrator import ChatTurnOrchestrator
-from src.domain.model.ai_jobs import AiJobType
+from src.domain.model.ai_jobs import LONG_AI_JOB_TYPES, AiJobType
 from src.domain.model.recipe_import.limits import IMPORT_DEADLINE_SECONDS
 from src.domain.model.weekly_meal_planner.limits import (
     WEEKLY_PLAN_DEADLINE_SECONDS,
@@ -48,6 +49,8 @@ logger = logging.getLogger(__name__)
 _BACKGROUND_SHUTDOWN_TIMEOUT_SECONDS = 15.0
 _CHAT_SHUTDOWN_GRACE_SECONDS = 10.0
 _CANCEL_TIMEOUT_SECONDS = 5.0
+# Nobody watches a week being written, so its idle lanes may back off further.
+_LONG_JOB_MAX_IDLE_SECONDS = 5.0
 
 _stop: asyncio.Event | None = None
 _tasks: list[asyncio.Task[None]] = []
@@ -150,42 +153,93 @@ async def start_ai_jobs(
     started = start_ai_jobs_background(executors_factory())
     if started:
         logger.info("AI job worker started")
+        logger.info(
+            "AI job lanes: %s short (cap %s across workers), %s long (cap %s)",
+            settings.AI_JOBS_WORKER_CONCURRENCY,
+            settings.AI_JOBS_GLOBAL_CAPACITY,
+            settings.AI_JOBS_LONG_WORKER_CONCURRENCY,
+            settings.AI_JOBS_LONG_GLOBAL_CAPACITY,
+        )
     return started
 
 
 def start_ai_jobs_background(executors: Mapping[AiJobType, AiJobExecutor]) -> bool:
-    """Run the worker lanes and the notifier; False if they already run."""
+    """Run the worker lanes and the notifier; False if they already run.
+
+    Long jobs (``LONG_AI_JOB_TYPES``) get lanes and a global cap of their own,
+    so weeks being written never hold back a scan someone is waiting for.
+    """
     global _stop
     if _tasks:
         return False
     settings = get_settings()
     probe = get_ai_jobs_schema_probe()
-    worker = AiJobWorker(
-        uow_factory=AsyncUnitOfWork,
-        executors=executors,
-        cancel_signals=get_ai_job_cancel_signals(),
-        wakeup=get_ai_job_wakeup(),
-        concurrency=settings.AI_JOBS_WORKER_CONCURRENCY,
-        global_capacity=settings.AI_JOBS_GLOBAL_CAPACITY,
-        lease_seconds=settings.AI_JOBS_LEASE_SECONDS,
-        heartbeat_seconds=settings.AI_JOBS_HEARTBEAT_SECONDS,
-        deadline_seconds=settings.AI_JOBS_EXECUTION_DEADLINE_SECONDS,
-        poll_seconds=settings.AI_JOBS_POLL_SECONDS,
-        notify_grace_seconds=settings.AI_JOBS_NOTIFY_GRACE_SECONDS,
-        # A video import may download and transcribe before reading, and a
-        # week is twenty-one dishes written one call at a time.
-        deadline_overrides={
-            AiJobType.RECIPE_IMPORT: max(
-                settings.AI_JOBS_EXECUTION_DEADLINE_SECONDS,
-                IMPORT_DEADLINE_SECONDS,
-            ),
-            AiJobType.WEEKLY_PLAN: max(
-                settings.AI_JOBS_EXECUTION_DEADLINE_SECONDS,
-                WEEKLY_PLAN_DEADLINE_SECONDS,
-            ),
-        },
-        ready=probe.ready,
-    )
+    # A video import may download and transcribe before reading, and a week
+    # is twenty-one dishes written one call at a time.
+    deadline_overrides = {
+        AiJobType.RECIPE_IMPORT: max(
+            settings.AI_JOBS_EXECUTION_DEADLINE_SECONDS,
+            IMPORT_DEADLINE_SECONDS,
+        ),
+        AiJobType.WEEKLY_PLAN: max(
+            settings.AI_JOBS_EXECUTION_DEADLINE_SECONDS,
+            WEEKLY_PLAN_DEADLINE_SECONDS,
+        ),
+    }
+
+    def build_worker(
+        lane_executors: Mapping[AiJobType, AiJobExecutor],
+        *,
+        concurrency: int,
+        global_capacity: int,
+        max_idle_seconds: float,
+    ) -> AiJobWorker:
+        return AiJobWorker(
+            uow_factory=AsyncUnitOfWork,
+            executors=lane_executors,
+            cancel_signals=get_ai_job_cancel_signals(),
+            wakeup=get_ai_job_wakeup(),
+            concurrency=concurrency,
+            global_capacity=global_capacity,
+            lease_seconds=settings.AI_JOBS_LEASE_SECONDS,
+            heartbeat_seconds=settings.AI_JOBS_HEARTBEAT_SECONDS,
+            deadline_seconds=settings.AI_JOBS_EXECUTION_DEADLINE_SECONDS,
+            poll_seconds=settings.AI_JOBS_POLL_SECONDS,
+            notify_grace_seconds=settings.AI_JOBS_NOTIFY_GRACE_SECONDS,
+            max_idle_seconds=max_idle_seconds,
+            deadline_overrides=deadline_overrides,
+            ready=probe.ready,
+        )
+
+    short = {t: e for t, e in executors.items() if t not in LONG_AI_JOB_TYPES}
+    long = {t: e for t, e in executors.items() if t in LONG_AI_JOB_TYPES}
+    workers: list[tuple[str, AiJobWorker]] = []
+    if short:
+        workers.append(
+            (
+                "AI job worker",
+                build_worker(
+                    short,
+                    concurrency=settings.AI_JOBS_WORKER_CONCURRENCY,
+                    global_capacity=settings.AI_JOBS_GLOBAL_CAPACITY,
+                    # Someone is watching these. A job queued by another
+                    # process cannot wake this one, so poll without backing off.
+                    max_idle_seconds=settings.AI_JOBS_POLL_SECONDS,
+                ),
+            )
+        )
+    if long and settings.AI_JOBS_LONG_WORKER_CONCURRENCY > 0:
+        workers.append(
+            (
+                "AI job long-job worker",
+                build_worker(
+                    long,
+                    concurrency=settings.AI_JOBS_LONG_WORKER_CONCURRENCY,
+                    global_capacity=settings.AI_JOBS_LONG_GLOBAL_CAPACITY,
+                    max_idle_seconds=_LONG_JOB_MAX_IDLE_SECONDS,
+                ),
+            )
+        )
     notifier = AiJobNotifier(
         uow_factory=AsyncUnitOfWork,
         sender=FcmPushSender(executor=get_push_executor()),
@@ -193,12 +247,8 @@ def start_ai_jobs_background(executors: Mapping[AiJobType, AiJobExecutor]) -> bo
     )
     stop = asyncio.Event()
     _stop = stop
-    _tasks.extend(
-        [
-            _spawn(worker.run(stop), "AI job worker"),
-            _spawn(notifier.run(stop), "AI job notifier"),
-        ]
-    )
+    _tasks.extend(_spawn(worker.run(stop), name) for name, worker in workers)
+    _tasks.append(_spawn(notifier.run(stop), "AI job notifier"))
     return True
 
 

@@ -336,8 +336,31 @@ class Settings(BaseSettings):
         default=True,
         description="Send allergies and health conditions in GET /v1/users/metrics.",
     )
-    AI_JOBS_WORKER_CONCURRENCY: int = Field(default=2, ge=1, le=16)
-    AI_JOBS_GLOBAL_CAPACITY: int = Field(default=4, ge=1, le=64)
+    AI_JOBS_WORKER_CONCURRENCY: int = Field(
+        default=2,
+        ge=1,
+        le=16,
+        description="Lanes per worker process for short jobs (scans, text, chat).",
+    )
+    AI_JOBS_GLOBAL_CAPACITY: int = Field(
+        default=4,
+        ge=1,
+        le=64,
+        description="Short jobs running at once across every worker process.",
+    )
+    # Weekly plans run for minutes, so they get lanes and a cap of their own.
+    AI_JOBS_LONG_WORKER_CONCURRENCY: int = Field(
+        default=2,
+        ge=0,
+        le=16,
+        description="Lanes per worker process for long jobs; 0 runs none here.",
+    )
+    AI_JOBS_LONG_GLOBAL_CAPACITY: int = Field(
+        default=4,
+        ge=1,
+        le=64,
+        description="Long jobs running at once across every worker process.",
+    )
     AI_JOBS_LEASE_SECONDS: int = Field(default=120, ge=30, le=3600)
     AI_JOBS_EXECUTION_DEADLINE_SECONDS: int = Field(default=90, ge=10, le=600)
     AI_JOBS_POLL_SECONDS: float = Field(default=1.0, ge=0.1, le=60)

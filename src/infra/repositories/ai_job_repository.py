@@ -8,7 +8,7 @@ All times come from ``clock_timestamp()`` so replicas share one clock.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
@@ -232,10 +232,19 @@ class AsyncAiJobRepository(AiJobRepositoryPort):
     # ------------------------------------------------------------------
 
     async def claim_next(
-        self, *, lease_seconds: int, global_capacity: int
+        self,
+        *,
+        lease_seconds: int,
+        global_capacity: int,
+        job_types: Collection[AiJobType],
     ) -> AiJobClaim | None:
         if not 10 <= lease_seconds <= 3600 or not 1 <= global_capacity <= 64:
             raise ValueError("Invalid AI job lease/capacity")
+        # Only types this worker can run: a worker built before a type existed
+        # leaves those jobs queued for a newer one instead of failing them.
+        types = sorted(str(job_type) for job_type in job_types)
+        if not types:
+            raise ValueError("A worker must claim at least one AI job type")
         # All replicas serialize the short admission decision, then release
         # the transaction before any provider work starts.
         await self.session.execute(
@@ -273,7 +282,9 @@ class AsyncAiJobRepository(AiJobRepositoryPort):
             error_retryable=func.coalesce(Job.error_retryable, True),
         )
         # Chat turns streaming in the API process have their own concurrency
-        # limits, so only non-chat work counts against worker capacity.
+        # limits, so only non-chat work counts against worker capacity. Each
+        # set of types counts only its own jobs: a full queue of long weekly
+        # plans never holds back meal scans.
         running = (
             await self.session.execute(
                 select(func.count())
@@ -281,6 +292,7 @@ class AsyncAiJobRepository(AiJobRepositoryPort):
                 .where(
                     Job.status == _RUNNING,
                     Job.lease_expires_at > now,
+                    Job.job_type.in_(types),
                     Job.job_type != str(AiJobType.CHAT),
                 )
             )
@@ -291,6 +303,7 @@ class AsyncAiJobRepository(AiJobRepositoryPort):
             await self.session.execute(
                 select(Job)
                 .where(
+                    Job.job_type.in_(types),
                     Job.attempts < Job.max_attempts,
                     Job.cancel_requested_at.is_(None),
                     or_(

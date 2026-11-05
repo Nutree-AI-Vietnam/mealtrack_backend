@@ -76,11 +76,19 @@ async def _enqueue(factory, user_id: str, **overrides):
     return job
 
 
-async def _claim(factory, *, lease_seconds: int = 120, capacity: int = 4):
+async def _claim(
+    factory,
+    *,
+    lease_seconds: int = 120,
+    capacity: int = 4,
+    job_types=frozenset(AiJobType),
+):
     return await _in_tx(
         factory,
         lambda repo: repo.claim_next(
-            lease_seconds=lease_seconds, global_capacity=capacity
+            lease_seconds=lease_seconds,
+            global_capacity=capacity,
+            job_types=job_types,
         ),
     )
 
@@ -182,6 +190,55 @@ async def test_running_chat_turns_do_not_use_worker_capacity(
     claim = await _claim(async_session_factory, capacity=1)
 
     assert claim is not None and claim.id == scan.id
+
+
+@pytest.mark.asyncio
+async def test_a_worker_claims_only_the_types_it_can_run(
+    pg_session, async_session_factory
+):
+    user_id = await _user(pg_session)
+    # Queued first: an older worker built before this type existed.
+    week = await _enqueue(
+        async_session_factory, user_id, job_type=AiJobType.WEEKLY_PLAN
+    )
+    scan = await _enqueue(async_session_factory, user_id, job_type=AiJobType.MEAL_SCAN)
+    short_types = frozenset({AiJobType.MEAL_SCAN, AiJobType.PARSE_TEXT})
+
+    claim = await _claim(async_session_factory, job_types=short_types)
+    assert claim is not None and claim.id == scan.id
+    # The week stays queued for a worker that can write it.
+    assert await _claim(async_session_factory, job_types=short_types) is None
+    assert (await _row(async_session_factory, week.id)).status == "queued"
+
+    week_claim = await _claim(
+        async_session_factory, job_types=frozenset({AiJobType.WEEKLY_PLAN})
+    )
+    assert week_claim is not None and week_claim.id == week.id
+
+
+@pytest.mark.asyncio
+async def test_long_jobs_do_not_use_the_short_jobs_capacity(
+    pg_session, async_session_factory
+):
+    user_id = await _user(pg_session)
+    weeks = frozenset({AiJobType.WEEKLY_PLAN})
+    short_types = frozenset({AiJobType.MEAL_SCAN})
+    for _ in range(2):
+        await _enqueue(async_session_factory, user_id, job_type=AiJobType.WEEKLY_PLAN)
+    scan = await _enqueue(async_session_factory, user_id, job_type=AiJobType.MEAL_SCAN)
+
+    assert await _claim(async_session_factory, capacity=1, job_types=weeks)
+    # The long lanes are full ...
+    assert await _claim(async_session_factory, capacity=1, job_types=weeks) is None
+    # ... and a scan still starts at once.
+    claim = await _claim(async_session_factory, capacity=1, job_types=short_types)
+    assert claim is not None and claim.id == scan.id
+
+
+@pytest.mark.asyncio
+async def test_claim_needs_at_least_one_type(pg_session, async_session_factory):
+    with pytest.raises(ValueError):
+        await _claim(async_session_factory, job_types=frozenset())
 
 
 @pytest.mark.asyncio
