@@ -6,6 +6,7 @@ from src.app.services.ai_jobs.executors import (
     MealScanJobExecutor,
     ParseTextJobExecutor,
 )
+from src.app.services.ai_jobs.janitor import AiJobJanitor
 from src.app.services.ai_jobs.notifier import AiJobNotifier
 from src.app.services.ai_jobs.push_token_service import PushTokenService
 from src.app.services.ai_jobs.recipe_import_executor import RecipeImportJobExecutor
@@ -19,6 +20,7 @@ from src.app.services.ai_jobs.worker import AiJobWorker
 
 __all__ = [
     "AiJobCancelSignals",
+    "AiJobJanitor",
     "AiJobNotifier",
     "AiJobService",
     "AiJobWakeup",

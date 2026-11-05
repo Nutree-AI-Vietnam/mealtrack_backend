@@ -697,6 +697,55 @@ async def test_concurrent_workers_never_claim_the_same_job(
 
 
 @pytest.mark.asyncio
+async def test_retention_deletes_only_old_finished_jobs(
+    pg_session, async_session_factory
+):
+    user_id = await _user(pg_session)
+    jobs = [await _enqueue(async_session_factory, user_id) for _ in range(4)]
+    finished = []
+    for outcome in ("complete", "complete", "fail"):
+        claim = await _claim(async_session_factory)
+        assert claim is not None
+        if outcome == "complete":
+            await _in_tx(
+                async_session_factory,
+                lambda repo, claim=claim: repo.complete(
+                    claim, result={"items": []}, notify_delay_seconds=8
+                ),
+            )
+        else:
+            await _in_tx(
+                async_session_factory,
+                lambda repo, claim=claim: repo.fail_attempt(
+                    claim,
+                    error=PERMANENT,
+                    retry_delay_seconds=None,
+                    notify_delay_seconds=0,
+                ),
+            )
+        finished.append(claim.id)
+    old_done, new_done, old_failed = finished
+    (old_queued,) = [job.id for job in jobs if job.id not in finished]
+    assert (await _row(async_session_factory, old_failed)).status == "failed"
+    assert (await _row(async_session_factory, old_queued)).status == "queued"
+    for job_id in (old_done, old_failed, old_queued):
+        await _shift(async_session_factory, job_id, created_at=-timedelta(days=31))
+
+    # One row per batch: the second batch takes the other old finished job.
+    for expected in (1, 1, 0):
+        deleted = await _in_tx(
+            async_session_factory,
+            lambda repo: repo.delete_finished(older_than_days=30, limit=1),
+        )
+        assert deleted == expected
+
+    async with async_session_factory() as session:
+        left = set((await session.execute(select(AiJobORM.id))).scalars().all())
+    # A queued job is never deleted, however old; a recent one stays too.
+    assert left == {old_queued, new_done}
+
+
+@pytest.mark.asyncio
 async def test_push_tokens_move_between_users_and_deactivate(
     pg_session, async_session_factory
 ):

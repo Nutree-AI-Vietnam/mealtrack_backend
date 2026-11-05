@@ -148,6 +148,14 @@ class AiJobRepositoryPort(ABC):
     # --- notifier ---
 
     @abstractmethod
+    async def delete_finished(self, *, older_than_days: int, limit: int) -> int:
+        """Delete up to ``limit`` finished jobs created over ``older_than_days`` ago.
+
+        Returns how many were deleted. Rows another transaction holds are
+        skipped, so several workers can run this at once.
+        """
+
+    @abstractmethod
     async def claim_notifications(
         self, *, limit: int, max_attempts: int, stale_after_seconds: int
     ) -> list[AiJobNotificationClaim]:

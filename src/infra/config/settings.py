@@ -361,6 +361,12 @@ class Settings(BaseSettings):
         le=64,
         description="Long jobs running at once across every worker process.",
     )
+    AI_JOBS_RETENTION_DAYS: int = Field(
+        default=30,
+        ge=1,
+        le=3650,
+        description="Worker processes delete finished AI jobs older than this.",
+    )
     AI_JOBS_LEASE_SECONDS: int = Field(default=120, ge=30, le=3600)
     AI_JOBS_EXECUTION_DEADLINE_SECONDS: int = Field(default=90, ge=10, le=600)
     AI_JOBS_POLL_SECONDS: float = Field(default=1.0, ge=0.1, le=60)

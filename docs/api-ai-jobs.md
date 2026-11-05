@@ -33,7 +33,8 @@ app. A user who has left the app gets a push instead.
   the job does not wait for its lease.
 - Failed and cancelled jobs stay readable, so nothing is dropped silently.
   `GET /v1/ai-jobs` lists only the last 24 hours, but `GET /v1/ai-jobs/{id}`
-  reads any of the user's jobs.
+  reads any of the user's jobs until retention deletes it
+  (`AI_JOBS_RETENTION_DAYS`, 30 days by default).
 
 ## Who runs what
 
@@ -57,6 +58,10 @@ app. A user who has left the app gets a push instead.
 - A worker claims only job types it has an executor for. A job of a type the
   running worker does not know yet (a web service or preprod deployed ahead
   of the worker) stays queued until a worker that knows it starts.
+- Each worker process also runs a janitor. A minute after start-up and then
+  hourly, it deletes finished jobs (completed, failed, cancelled) created
+  more than `AI_JOBS_RETENTION_DAYS` ago, at most 50,000 rows a pass, in
+  batches of 1,000.
 - A job queued in the same process wakes that process's idle lanes at once.
   A worker in another process finds it on its next poll: short lanes poll
   every `AI_JOBS_POLL_SECONDS`, and long lanes back off to 5 s when idle.
@@ -305,6 +310,7 @@ can finish what it already queued.
 | `AI_JOBS_GLOBAL_CAPACITY` | `4` | Short jobs running across all workers, chat aside (1–64) |
 | `AI_JOBS_LONG_WORKER_CONCURRENCY` | `2` | Long-job (weekly plan) lanes per worker process; 0 runs none here (0–16) |
 | `AI_JOBS_LONG_GLOBAL_CAPACITY` | `4` | Long jobs running across all workers (1–64) |
+| `AI_JOBS_RETENTION_DAYS` | `30` | Worker processes delete finished jobs created longer ago than this; queued and running jobs are kept (1–3650) |
 | `AI_JOBS_LEASE_SECONDS` | `120` | How long a silent worker keeps a job (30–3600) |
 | `AI_JOBS_EXECUTION_DEADLINE_SECONDS` | `90` | Longest single attempt (10–600) |
 | `AI_JOBS_POLL_SECONDS` | `1.0` | How often idle short lanes look for work; a new job in the same process wakes them at once (0.1–60) |
@@ -329,7 +335,6 @@ draining what is already queued until `AI_JOBS_WORKER_ENABLED` is off too.
 
 ## Not built yet
 
-- Nothing deletes old `ai_jobs` rows yet.
 - Push copy for languages other than English and Vietnamese.
 - Out of scope for this ticket: quiet hours, and job types other than chat,
   meal scan, text parse and recipe import.

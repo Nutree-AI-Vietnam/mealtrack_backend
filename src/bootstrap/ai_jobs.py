@@ -16,6 +16,7 @@ from typing import Any
 
 from src.app.services.ai_jobs import (
     AiJobCancelSignals,
+    AiJobJanitor,
     AiJobNotifier,
     AiJobService,
     AiJobsSchemaProbe,
@@ -164,7 +165,7 @@ async def start_ai_jobs(
 
 
 def start_ai_jobs_background(executors: Mapping[AiJobType, AiJobExecutor]) -> bool:
-    """Run the worker lanes and the notifier; False if they already run.
+    """Run the worker lanes, the notifier and the janitor; False if they run.
 
     Long jobs (``LONG_AI_JOB_TYPES``) get lanes and a global cap of their own,
     so weeks being written never hold back a scan someone is waiting for.
@@ -245,10 +246,16 @@ def start_ai_jobs_background(executors: Mapping[AiJobType, AiJobExecutor]) -> bo
         sender=FcmPushSender(executor=get_push_executor()),
         ready=probe.ready,
     )
+    janitor = AiJobJanitor(
+        uow_factory=AsyncUnitOfWork,
+        retention_days=settings.AI_JOBS_RETENTION_DAYS,
+        ready=probe.ready,
+    )
     stop = asyncio.Event()
     _stop = stop
     _tasks.extend(_spawn(worker.run(stop), name) for name, worker in workers)
     _tasks.append(_spawn(notifier.run(stop), "AI job notifier"))
+    _tasks.append(_spawn(janitor.run(stop), "AI job janitor"))
     return True
 
 
