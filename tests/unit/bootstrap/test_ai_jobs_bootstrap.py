@@ -183,7 +183,7 @@ async def test_start_runs_the_worker_and_the_notifier_once(env, caplog):
             notify_grace_seconds=8,
             deadline_overrides={
                 AiJobType.RECIPE_IMPORT: 120.0,
-                AiJobType.WEEKLY_PLAN: 420.0,
+                AiJobType.WEEKLY_PLAN: 900.0,
             },
             ready=env.probe.ready,
         )
@@ -415,10 +415,38 @@ class TestAWeekOutlivesTheDefaultDeadline:
         assert Settings().AI_JOBS_EXECUTION_DEADLINE_SECONDS < 121
         assert WEEKLY_PLAN_DEADLINE_SECONDS > 121 * 2
 
-    def test_a_longer_configured_deadline_still_wins(self):
-        """The override is a floor, not a ceiling."""
+    def test_the_override_is_what_a_week_gets_whatever_is_configured(self):
+        """worker.py looks the override up instead of the default.
+
+        The assertion used to read ``max(600, WEEKLY_PLAN_DEADLINE_SECONDS)
+        == 600`` under a docstring calling the override a floor, which the
+        worker has never done: it reads the override in place of the
+        configured default, longer or shorter. This pins the real lookup so
+        that raising the week's number cannot quietly stop applying.
+        """
+        from src.app.services.ai_jobs.worker import AiJobWorker
         from src.domain.model.weekly_meal_planner.limits import (
             WEEKLY_PLAN_DEADLINE_SECONDS,
         )
 
-        assert max(600, WEEKLY_PLAN_DEADLINE_SECONDS) == 600
+        for configured in (60.0, 1800.0):
+            worker = AiJobWorker(
+                uow_factory=MagicMock(),
+                executors={},
+                cancel_signals=MagicMock(),
+                wakeup=MagicMock(),
+                concurrency=1,
+                global_capacity=1,
+                lease_seconds=120,
+                heartbeat_seconds=2.0,
+                deadline_seconds=configured,
+                poll_seconds=1.0,
+                notify_grace_seconds=8,
+                deadline_overrides={
+                    AiJobType.WEEKLY_PLAN: WEEKLY_PLAN_DEADLINE_SECONDS
+                },
+            )
+            chosen = worker._deadline_overrides.get(
+                AiJobType.WEEKLY_PLAN, worker._deadline_seconds
+            )
+            assert chosen == WEEKLY_PLAN_DEADLINE_SECONDS

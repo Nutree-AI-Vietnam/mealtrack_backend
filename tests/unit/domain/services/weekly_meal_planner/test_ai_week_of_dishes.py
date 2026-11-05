@@ -33,15 +33,17 @@ def _recipe(name, *, protein=25.0, steps=None, extra_line=True):
     if extra_line:
         lines.append(
             {
-                # Carries the rest of a real lunch: a dish that comes to a
-                # fifth of its slot is now turned away for being off target,
-                # which is the point, but it must not take every fixture
-                # with it.
+                # Carries the rest of a real lunch, and lands the fixture
+                # at 97% of the 600 kcal slot the tests ask for. A dish that
+                # comes to a fifth of its slot is turned away for being off
+                # target, which is the point, but it must not take every
+                # fixture with it - and the band is tight enough now that a
+                # fixture at four fifths of target would trip it too.
                 "name": "rice and steamed greens",
                 "amount": 220,
                 "unit": "g",
                 "protein": 3,
-                "carbs": 60,
+                "carbs": 85,
                 "fat": 12,
                 "fiber": 3,
             }
@@ -691,12 +693,15 @@ class TestTwiceTheSameProteinInOneDay:
             "ingredients": [
                 {**protein_line, "amount": 150, "unit": "g"},
                 # Enough to land near a 600 kcal slot, so the off-target
-                # check is not what these tests end up measuring.
+                # check is not what these tests end up measuring: the
+                # chicken build comes to 582 kcal and the salmon one to 712,
+                # both inside the band a dish is taken on without asking
+                # for another name.
                 {
                     "name": "rice and carrot",
                     "amount": 220,
                     "unit": "g",
-                    "carbs": 62,
+                    "carbs": 85,
                     "fat": 10,
                 },
             ],
@@ -818,6 +823,98 @@ class TestTwiceTheSameProteinInOneDay:
         assert week.unfilled == ()
         assert sorted(d.name for d in week.dishes.values()) == ["Gà luộc", "Gà nướng"]
         assert [r.reasons for r in week.rejected] == [("SAME_PROTEIN_TODAY_CHICKEN",)]
+
+    @pytest.mark.asyncio
+    async def test_twice_the_same_taste_in_one_day_asks_for_another_name(self):
+        """Staging opened with Chả giò bơ, Bít tết bơ tỏi, Tôm rang bơ tỏi.
+
+        Three proteins, one taste. The protein rule reads that day as
+        varied, and nobody who ate it would.
+        """
+        beef = {"name": "beef sirloin", "protein": 38}
+        shrimp = {"name": "shrimp", "protein": 30}
+        fish = {"name": "white fish", "protein": 32}
+        model = _Model(
+            ["Beef lunch", "Shrimp dinner", "Fish dinner"],
+            recipes={
+                "Beef lunch": self._of("Bít tết bơ tỏi", beef),
+                "Shrimp dinner": self._of("Tôm rang bơ tỏi", shrimp),
+                "Fish dinner": self._of("Cá hấp gừng", fish),
+            },
+        )
+
+        week = await generate_week_of_dishes(
+            (
+                DishRequest(
+                    day_index=0, slot_index=1, meal_type="lunch", target_calories=600
+                ),
+                DishRequest(
+                    day_index=0, slot_index=2, meal_type="dinner", target_calories=600
+                ),
+            ),
+            ask=model.ask,
+            new_id=lambda: "x",
+            **BUILDERS,
+        )
+
+        assert sorted(d.name for d in week.dishes.values()) == [
+            "Bít tết bơ tỏi",
+            "Cá hấp gừng",
+        ]
+        assert any(r.reasons == ("SAME_FLAVOUR_TODAY_BƠ",) for r in week.rejected), [
+            r.reasons for r in week.rejected
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_day_of_plain_names_is_left_alone(self):
+        """Most names say nothing about seasoning; none of them collide."""
+        beef = {"name": "beef sirloin", "protein": 38}
+        fish = {"name": "white fish", "protein": 32}
+        model = _Model(
+            ["Beef lunch", "Fish dinner"],
+            recipes={
+                "Beef lunch": self._of("Phở bò chín", beef),
+                "Fish dinner": self._of("Cháo cá", fish),
+            },
+        )
+
+        week = await generate_week_of_dishes(
+            (
+                DishRequest(
+                    day_index=0, slot_index=1, meal_type="lunch", target_calories=600
+                ),
+                DishRequest(
+                    day_index=0, slot_index=2, meal_type="dinner", target_calories=600
+                ),
+            ),
+            ask=model.ask,
+            new_id=lambda: "x",
+            **BUILDERS,
+        )
+
+        assert len(week.dishes) == 2
+        assert week.rejected == ()
+
+    @pytest.mark.asyncio
+    async def test_another_day_may_cook_the_same_taste(self):
+        """A taste is a rule about one day, like its protein."""
+        beef = {"name": "beef sirloin", "protein": 38}
+        model = _Model(
+            ["Lunch one", "Lunch two"],
+            recipes={
+                "Lunch one": self._of("Bò kho sả", beef),
+                "Lunch two": self._of(
+                    "Gà kho sả", {"name": "chicken breast", "protein": 36}
+                ),
+            },
+        )
+
+        week = await generate_week_of_dishes(
+            _requests(2), ask=model.ask, new_id=lambda: "x", **BUILDERS
+        )
+
+        assert len(week.dishes) == 2
+        assert week.rejected == ()
 
     @pytest.mark.asyncio
     async def test_another_day_may_eat_the_same_protein(self):
@@ -1028,14 +1125,47 @@ class TestADishThatIsFoodButNotThisMeal:
             for r in review_ai_dish(self._at(200), target_calories=675)
         )
 
-    def test_the_band_keeps_what_a_real_week_produced(self):
-        """Eighteen priced dishes: most landed at 100-140% of target."""
-        for share in (0.75, 1.0, 1.2, 1.4):
+    def test_a_dish_that_landed_on_its_slot_is_taken_as_it_is(self):
+        """Inside the band nothing is said, so no second name is asked for."""
+        for share in (0.9, 1.0, 1.1, 1.2):
             dish = self._at(675 * share)
             assert not any(
                 r.startswith("OFF_TARGET")
                 for r in review_ai_dish(dish, target_calories=675)
-            ), f"{share:.0%} of target should be kept"
+            ), f"{share:.0%} of target should be taken as it is"
+
+    def test_a_dish_a_sixth_short_asks_for_another_name(self):
+        """Staging's week: every slot inside 0.6-1.5, days a fifth short.
+
+        Three dishes at 0.8 is a day at 0.8. Being under is as wrong as
+        being over, and saying so costs one name, never the slot.
+        """
+        for share in (0.75, 0.8, 1.35):
+            assert any(
+                r.startswith("OFF_TARGET")
+                for r in review_ai_dish(self._at(675 * share), target_calories=675)
+            ), f"{share:.0%} of target should ask for another name"
+
+    @pytest.mark.asyncio
+    async def test_a_slot_whose_dishes_are_all_short_still_gets_the_closest(self):
+        """Off target is never worth an empty slot - but take the best one."""
+        model = _Model(
+            ["Small lunch", "Smaller lunch"],
+            recipes={
+                "Small lunch": _recipe("Canh suông", protein=25),
+                "Smaller lunch": _recipe("Canh rau", protein=4),
+            },
+        )
+
+        week = await generate_week_of_dishes(
+            _requests(1, kcal=900), ask=model.ask, new_id=lambda: "x", **BUILDERS
+        )
+
+        assert week.unfilled == ()
+        # 587 kcal against 900 beats 503 against 900, and the dish the slot
+        # keeps is not also reported as one the week turned away.
+        assert [d.name for d in week.dishes.values()] == ["Canh suông"]
+        assert [r.name for r in week.rejected] == ["Canh rau"]
 
     def test_no_target_means_no_such_check(self):
         assert not any(
