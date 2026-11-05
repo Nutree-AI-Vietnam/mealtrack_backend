@@ -1,5 +1,6 @@
 """The background job that writes a preparing week's dishes."""
 
+import asyncio
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
 
@@ -236,6 +237,104 @@ class TestWritingTheWeek:
         assert list(update["saved_slots"]) == [(0, 1)]
         assert result["dishes"] == 1
         assert result["unfilled"] == [[0, 0]]
+
+    @pytest.mark.asyncio
+    async def test_each_dish_is_stored_with_its_photo(self, monkeypatch):
+        """A written week reached the app with the empty plate in every slot."""
+        plans = _Plans()
+
+        async def photographer(card):
+            return SimpleNamespace(url=f"https://photos.example/{card['english_name']}")
+
+        handler = WriteWeeklyPlanDishesCommandHandler(
+            uow_factory=lambda: _Uow(plans),
+            generation_service=None,
+            photographer=photographer,
+        )
+
+        async def one_dish(*args, on_dish, **kwargs):
+            from src.domain.services.weekly_meal_planner.ai_dish import WeekOfDishes
+
+            dish = _tofu_dish()
+            on_dish(dish)
+            return WeekOfDishes(dishes={(0, 1): dish})
+
+        monkeypatch.setattr(_GENERATE, one_dish)
+
+        await handler.handle(_COMMAND)
+
+        stored = plans.updates[0]["saved_slots"][(0, 1)]
+        assert stored.name == "Đậu hũ sả"
+        assert stored.image_url == "https://photos.example/Lemongrass tofu"
+
+    @pytest.mark.asyncio
+    async def test_a_week_that_cannot_be_priced_stops_its_photos(self, monkeypatch):
+        plans = _Plans()
+        stopped = []
+
+        async def photographer(card):
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                stopped.append(card["english_name"])
+                raise
+
+        handler = WriteWeeklyPlanDishesCommandHandler(
+            uow_factory=lambda: _Uow(plans),
+            generation_service=None,
+            photographer=photographer,
+        )
+
+        async def priced_out(*args, on_dish, **kwargs):
+            from src.domain.services.weekly_meal_planner.ai_dish import (
+                PricingUnavailable,
+            )
+
+            on_dish(_tofu_dish())
+            await asyncio.sleep(0)
+            raise PricingUnavailable("every nutrition tier is down")
+
+        monkeypatch.setattr(_GENERATE, priced_out)
+
+        with pytest.raises(RuntimeError, match="WEEKLY_PLAN_PRICING_UNAVAILABLE"):
+            await handler.handle(_COMMAND)
+        await asyncio.sleep(0)
+
+        assert stopped == ["Lemongrass tofu"]
+        assert plans.updates == []
+
+
+_GENERATE = (
+    "src.app.handlers.command_handlers.meal_planner."
+    "write_weekly_plan_dishes_handler.generate_week_of_dishes"
+)
+_COMMAND = WriteWeeklyPlanDishesCommand(
+    user_id="u",
+    plan_id="p",
+    week_start_date=date(2026, 11, 2),
+    daily_calories=1800,
+    language="vi",
+)
+
+
+def _tofu_dish():
+    from src.domain.services.weekly_meal_planner.ai_dish import (
+        snapshot_from_ai_recipe,
+    )
+
+    return snapshot_from_ai_recipe(
+        {
+            "name": "Lemongrass tofu",
+            "local_name": "Đậu hũ sả",
+            "ingredients": [
+                {"name": "tofu", "amount": 120, "unit": "g", "protein": 19},
+                {"name": "rice", "amount": 150, "unit": "g", "carbs": 45},
+            ],
+            "recipe_steps": [{"instruction": "Grill until cooked through."}],
+        },
+        dish_id="ai-1",
+        language="vi",
+    )
 
 
 class TestWhatABreakfastIs:
