@@ -185,9 +185,9 @@ optional caches.
   of `nutreeai_async:events:<ENVIRONMENT>`, trimmed to about
   `INTEGRATION_EVENT_STREAM_MAXLEN` entries. The Worker reads it through the
   `nutreeai_async` consumer group.
-- Switch an environment only after its Worker consumes the stream, and keep
-  Upstash eviction disabled so the stream cannot be evicted. Consumer contract
-  and rollout:
+- Switch an environment only after its Worker consumes the stream. The Key
+  Value eviction policy must never evict keys without a TTL (`volatile-*` or
+  `noeviction`, not `allkeys-*`). Consumer contract and rollout:
   [`decisions/261105-0248-redis-stream-transport-for-nutreeai-async.md`](decisions/261105-0248-redis-stream-transport-for-nutreeai-async.md).
 
 ### Cloudflare integration event orchestration

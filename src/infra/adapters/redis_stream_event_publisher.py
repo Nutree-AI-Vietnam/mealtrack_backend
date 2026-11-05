@@ -1,7 +1,7 @@
 """Append integration events to the Redis stream the nutreeai_async Worker reads.
 
-The stream lives in the same Redis (`REDIS_URL`) the Worker already reaches
-through Upstash REST. Each entry holds one compact JSON envelope under the
+The stream lives in the backend's Redis (`REDIS_URL`), which the Worker reads
+from outside Render. Each entry holds one compact JSON envelope under the
 `event` field. `MAXLEN ~` bounds memory while the Worker is down: past the
 cap, the oldest entries are trimmed, delivered or not.
 """
@@ -22,7 +22,9 @@ logger = logging.getLogger(__name__)
 STREAM_KEY_PREFIX = "nutreeai_async:events"
 EVENT_FIELD = "event"
 
-_MAX_CONNECTIONS = 10
+# Opened on demand; XADD on the private network is sub-millisecond, and Key
+# Value plans cap connections.
+_MAX_CONNECTIONS = 4
 # A burst of writes waits this long for a free connection instead of failing.
 _POOL_WAIT_SECONDS = 10.0
 _HEALTH_CHECK_INTERVAL_SECONDS = 30

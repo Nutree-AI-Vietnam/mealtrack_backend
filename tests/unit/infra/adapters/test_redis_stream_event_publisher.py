@@ -60,7 +60,7 @@ def test_connect_waits_for_a_free_connection_instead_of_dropping() -> None:
 
     pool = client.connection_pool
     assert isinstance(pool, redis.BlockingConnectionPool)
-    assert pool.max_connections == 10
+    assert pool.max_connections == 4
     assert client.auto_close_connection_pool is True
 
 
