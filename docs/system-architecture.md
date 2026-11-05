@@ -47,6 +47,39 @@ device, and purchase gates remain open.
 
 **Layer rule:** Domain has no outer-layer or external I/O dependencies. See `cqrs-guide.md` for handler patterns.
 
+## Deployment Topology (Render)
+
+One image, `ghcr.io/nutree-ai-vietnam/mealtrack_backend`, runs as every
+service. Environment variables decide what each process does.
+
+| Service | Kind | Runs | Key settings |
+|---------|------|------|--------------|
+| `nutree_backend` | Web service | HTTP API, in-process integration events, chat turns it streams | `AI_JOBS_ENABLED=true`, `AI_JOBS_WORKER_ENABLED=false`, `UVICORN_WORKERS=2` |
+| AI job worker | Background worker | AI job lanes and the AI job push notifier | `AI_JOBS_WORKER_ENABLED=true`, `UVICORN_WORKERS=1` |
+| `nutree-backend-preprod` | Web service, preview of `nutree_backend` | HTTP API only, on production's database, Redis and Firebase | Set by `.github/workflows/render-preprod.yml`: `UVICORN_WORKERS=1`, `AI_JOBS_WORKER_ENABLED=false`, `ENGAGEMENT_PUSH_ENABLED=false` |
+
+- **Background work runs in one place.** The AI job queue lives in
+  PostgreSQL and any worker can claim any job it has an executor for. A
+  second worker, such as a preprod clone with `AI_JOBS_WORKER_ENABLED`,
+  would take real users' jobs and run them on its own code.
+- **Preprod queues, production runs.** Jobs preprod queues are run by the
+  production worker on production's code. A job type that production's
+  worker does not know yet waits in the queue until it does.
+- **Deploy the worker first.** The worker's code must know every job type
+  the web service queues. Jobs of an unknown type wait in the queue rather
+  than fail, so the other order only delays them.
+- **Why the worker is its own service.** A web process gets 15 s to finish
+  work on deploy or recycle (`WORKER_MAX_REQUESTS`), and a weekly plan runs
+  for minutes (deadline 900 s). The worker runs one uvicorn process, so it
+  is never recycled. It also keeps AI CPU and memory away from API latency.
+- **Scaling.** Web: add instances. Every request is stateless, and periodic
+  work claims rows with `SKIP LOCKED`. AI jobs: raise lanes per worker
+  (`AI_JOBS_WORKER_CONCURRENCY`, `AI_JOBS_LONG_WORKER_CONCURRENCY`) and the
+  system-wide caps (`AI_JOBS_GLOBAL_CAPACITY`, `AI_JOBS_LONG_GLOBAL_CAPACITY`),
+  or add worker instances. The caps protect the AI providers' rate limits,
+  so raise them together with the provider limits. See
+  [AI jobs](api-ai-jobs.md#who-runs-what).
+
 ---
 
 ## Key Architectural Patterns
