@@ -40,7 +40,8 @@ app. A user who has left the app gets a push instead.
 - Every API process accepts new jobs and answers reads.
 - Processes with `AI_JOBS_WORKER_ENABLED` also run the worker and the push
   notifier. Unless at least one process does, queued jobs never run. In
-  production that is one dedicated worker service; see
+  production that is `nutree_backend`. Preprod, which shares production's
+  database, never runs a worker. See
   [Deployment topology](system-architecture.md#deployment-topology-render).
 - The worker has two sets of lanes, each with its own cap across all
   workers:
@@ -315,13 +316,13 @@ can finish what it already queued.
 
 1. Run the migration with both flags off. Token registration starts storing
    tokens at once, so devices are known before any push is due.
-2. Set `AI_JOBS_WORKER_ENABLED=true` on exactly one service, the worker.
-   Leave it off on the web service and on preprod, which shares the
-   production database.
-3. Set `AI_JOBS_ENABLED=true` on the web service.
+2. Set `AI_JOBS_WORKER_ENABLED=true` on production's service. Never set it
+   on preprod, which shares the production database.
+3. Set `AI_JOBS_ENABLED=true`.
 
-Deploy the worker before the web service, so it already knows any new job
-type the web service starts queuing.
+If the worker later moves to its own service, deploy it before the web
+service, so it already knows any new job type the web service starts
+queuing.
 
 Turning `AI_JOBS_ENABLED` off stops new jobs and manual retries. Workers keep
 draining what is already queued until `AI_JOBS_WORKER_ENABLED` is off too.
