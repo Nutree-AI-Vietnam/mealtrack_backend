@@ -11,6 +11,10 @@ class AiJobType(StrEnum):
     PARSE_TEXT = "parse_text"
     RECIPE_IMPORT = "recipe_import"
     WEEKLY_PLAN = "weekly_plan"
+    # Ghi nhanh: one sentence the app hands off, logged like its sync route.
+    DESCRIBE_LOG = "describe_log"  # POST /v1/log/describe (+ panel, supplements)
+    DESCRIBE_MOVEMENT = "describe_movement"  # POST /v1/movement/describe
+    DESCRIBE_HYDRATION = "describe_hydration"  # POST /v1/hydration/describe
 
 
 class AiJobStatus(StrEnum):
@@ -44,6 +48,14 @@ NOTIFIABLE_AI_JOB_STATUSES = frozenset({AiJobStatus.COMPLETED, AiJobStatus.FAILE
 # Chat turns start through the chat endpoint, never through POST /v1/ai-jobs.
 # A week is asked for through the meal-plan endpoints, which know the week
 # and the user's targets, never through POST /v1/ai-jobs.
+DESCRIBE_AI_JOB_TYPES = frozenset(
+    {
+        AiJobType.DESCRIBE_LOG,
+        AiJobType.DESCRIBE_MOVEMENT,
+        AiJobType.DESCRIBE_HYDRATION,
+    }
+)
 ENQUEUEABLE_AI_JOB_TYPES = frozenset(
     {AiJobType.MEAL_SCAN, AiJobType.PARSE_TEXT, AiJobType.RECIPE_IMPORT}
+    | DESCRIBE_AI_JOB_TYPES
 )

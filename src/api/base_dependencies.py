@@ -489,6 +489,20 @@ def get_meal_analyze_graph_settings():
     }
 
 
+def user_metrics_hidden_fields() -> frozenset[str]:
+    """Fields GET /v1/users/metrics leaves out of its response.
+
+    The app reads the presence of "allergies" as the server supporting
+    allergies at all, so leaving the key out is what hides its two cards.
+    Read through here because src.api may not import src.infra directly.
+    """
+    from src.infra.config.settings import get_settings
+
+    if getattr(get_settings(), "USER_METRICS_ALLERGIES_ENABLED", True):
+        return frozenset()
+    return frozenset({"allergies", "health_conditions"})
+
+
 def weekly_plan_ai_dishes_enabled() -> bool:
     """Whether a week's dishes come from a model rather than the catalogue.
 

@@ -6,7 +6,10 @@ Handles user profile management and TDEE calculations.
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 
+from src.api.base_dependencies import user_metrics_hidden_fields
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
 from src.api.exceptions import handle_exception
@@ -162,7 +165,15 @@ async def get_user_metrics(
     # Send query
     result = await event_bus.send(query)
 
-    return UserMetricsResponse(**result)
+    metrics = UserMetricsResponse(**result)
+    hidden = user_metrics_hidden_fields()
+    if not hidden:
+        return metrics
+    # The app reads the presence of "allergies" as the server supporting
+    # allergies, so the key has to be absent rather than empty. Returning a
+    # Response skips FastAPI's response_model, which would put the defaults
+    # straight back in.
+    return JSONResponse(content=jsonable_encoder(metrics, exclude=hidden))
 
 
 @router.get("/tdee", response_model=TdeeCalculationResponse)
