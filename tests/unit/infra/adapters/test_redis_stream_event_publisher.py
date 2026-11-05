@@ -29,24 +29,35 @@ def test_stream_key_is_scoped_to_environment() -> None:
     assert stream_key("production") == "nutreeai_async:events:production"
 
 
-def test_from_settings_derives_stream_from_environment(monkeypatch) -> None:
+def _settings(monkeypatch, **overrides) -> None:
     import src.infra.config.settings as settings_mod
 
-    monkeypatch.setattr(
-        settings_mod,
-        "get_settings",
-        lambda: SimpleNamespace(
-            redis_url="rediss://default:pw@example.upstash.io:6379",
-            ENVIRONMENT="staging",
-            INTEGRATION_EVENT_STREAM_MAXLEN=1234,
-        ),
-    )
+    values = {
+        "redis_url": "redis://red-cache:6379",
+        "ENVIRONMENT": "staging",
+        "INTEGRATION_EVENT_STREAM_MAXLEN": 1234,
+        "INTEGRATION_EVENT_REDIS_URL": "",
+        **overrides,
+    }
+    monkeypatch.setattr(settings_mod, "get_settings", lambda: SimpleNamespace(**values))
+
+
+def test_from_settings_derives_stream_from_environment(monkeypatch) -> None:
+    _settings(monkeypatch)
 
     publisher = RedisStreamEventPublisher.from_settings()
 
     assert publisher.stream_key == "nutreeai_async:events:staging"
     assert publisher._max_length == 1234
-    assert publisher._redis_url == "rediss://default:pw@example.upstash.io:6379"
+    assert publisher._redis_url == "redis://red-cache:6379"
+
+
+def test_from_settings_prefers_a_dedicated_event_redis(monkeypatch) -> None:
+    _settings(monkeypatch, INTEGRATION_EVENT_REDIS_URL="redis://red-events:6379")
+
+    publisher = RedisStreamEventPublisher.from_settings()
+
+    assert publisher._redis_url == "redis://red-events:6379"
 
 
 def test_connect_waits_for_a_free_connection_instead_of_dropping() -> None:

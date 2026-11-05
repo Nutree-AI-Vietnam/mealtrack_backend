@@ -1,8 +1,8 @@
 """Append integration events to the Redis stream the nutreeai_async Worker reads.
 
-The stream lives in the backend's Redis (`REDIS_URL`), which the Worker reads
-from outside Render. Each entry holds one compact JSON envelope under the
-`event` field. `MAXLEN ~` bounds memory while the Worker is down: past the
+The stream lives in `INTEGRATION_EVENT_REDIS_URL` (default `REDIS_URL`), which
+the nutreeai_async worker reads over Render's private network. Each entry holds
+one compact JSON envelope under the `event` field. `MAXLEN ~` bounds memory while the Worker is down: past the
 cap, the oldest entries are trimmed, delivered or not.
 """
 
@@ -65,7 +65,7 @@ class RedisStreamEventPublisher:
 
         settings = get_settings()
         return cls(
-            redis_url=settings.redis_url,
+            redis_url=settings.INTEGRATION_EVENT_REDIS_URL or settings.redis_url,
             stream_key=stream_key(settings.ENVIRONMENT),
             max_length=settings.INTEGRATION_EVENT_STREAM_MAXLEN,
         )

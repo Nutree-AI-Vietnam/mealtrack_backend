@@ -29,3 +29,9 @@ def test_unknown_transport_fails_at_startup():
 def test_stream_maxlen_must_be_positive():
     with pytest.raises(ValidationError):
         Settings(INTEGRATION_EVENT_STREAM_MAXLEN=0, _env_file=None)
+
+
+def test_event_redis_defaults_to_the_cache_redis(monkeypatch):
+    monkeypatch.delenv("INTEGRATION_EVENT_REDIS_URL", raising=False)
+
+    assert Settings(_env_file=None).INTEGRATION_EVENT_REDIS_URL == ""

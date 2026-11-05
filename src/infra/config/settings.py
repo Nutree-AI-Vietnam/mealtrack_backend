@@ -140,14 +140,17 @@ class Settings(BaseSettings):
     CLOUDFLARE_QUEUE_TIMEOUT_SECONDS: float = Field(default=3.0, gt=0)
 
     # How integration events reach nutreeai_async. "redis_stream" appends to
-    # the `nutreeai_async:events:<ENVIRONMENT>` stream in REDIS_URL instead of
-    # calling the Cloudflare Queue API. Switch only once the Worker consumes
-    # that stream: docs/decisions/261105-0248-redis-stream-transport-for-nutreeai-async.md
+    # the `nutreeai_async:events:<ENVIRONMENT>` stream instead of calling the
+    # Cloudflare Queue API. Switch only once the worker consumes that stream:
+    # docs/decisions/261105-0248-redis-stream-transport-for-nutreeai-async.md
     INTEGRATION_EVENT_TRANSPORT: Literal["cloudflare_queue", "redis_stream"] = Field(
         default="cloudflare_queue"
     )
     # Approximate entry cap; bounds Redis memory while the Worker is down.
     INTEGRATION_EVENT_STREAM_MAXLEN: int = Field(default=20_000, gt=0)
+    # Redis holding the stream; blank uses REDIS_URL. A queue wants noeviction
+    # and persistence, which an allkeys-lru cache instance does not give it.
+    INTEGRATION_EVENT_REDIS_URL: str = Field(default="")
 
     # Firebase
     FIREBASE_CREDENTIALS: str | None = Field(default=None)

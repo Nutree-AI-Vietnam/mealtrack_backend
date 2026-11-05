@@ -183,11 +183,14 @@ optional caches.
   exactly one transport; never both, or the Worker processes events twice.
 - `redis_stream` appends the same envelope as compact JSON in the `event` field
   of `nutreeai_async:events:<ENVIRONMENT>`, trimmed to about
-  `INTEGRATION_EVENT_STREAM_MAXLEN` entries. The Worker reads it through the
-  `nutreeai_async` consumer group.
-- Switch an environment only after its Worker consumes the stream. The Key
-  Value eviction policy must never evict keys without a TTL (`volatile-*` or
-  `noeviction`, not `allkeys-*`). Consumer contract and rollout:
+  `INTEGRATION_EVENT_STREAM_MAXLEN` entries, in `INTEGRATION_EVENT_REDIS_URL`
+  (blank falls back to `REDIS_URL`). The `nutreeai_async` background worker
+  reads it over Render's private network through the `nutreeai_async`
+  consumer group.
+- Switch an environment only after its worker consumes the stream. Give the
+  stream a Key Value instance with `noeviction` and persistence on: the cache
+  instance runs `allkeys_lru` without persistence. Consumer contract and
+  rollout:
   [`decisions/261105-0248-redis-stream-transport-for-nutreeai-async.md`](decisions/261105-0248-redis-stream-transport-for-nutreeai-async.md).
 
 ### Cloudflare integration event orchestration
