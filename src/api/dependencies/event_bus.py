@@ -513,6 +513,7 @@ def get_configured_event_bus() -> EventBus:
     from src.api.base_dependencies import (
         get_ai_model_manager,
         get_cache_service,
+        get_chat_meal_image_generator,
         get_fat_secret_service_instance,
         get_food_cache_service,
         get_food_data_service,
@@ -956,6 +957,10 @@ def get_configured_event_bus() -> EventBus:
             AsyncUnitOfWork,
             generation_service=meal_generation_service,
             nutrition_lookup=get_nutrition_lookup_service(),
+            # The Cloudflare photos chat meal cards use, under the same
+            # per-dish ids, so a dish already drawn is not drawn again.
+            # None (Cloudflare not configured) leaves the empty plate.
+            photographer=get_chat_meal_image_generator(),
         ),
     )
     event_bus.register_handler(

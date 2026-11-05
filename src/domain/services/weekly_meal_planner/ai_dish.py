@@ -17,11 +17,12 @@ this says whether the week may keep it.
 
 from __future__ import annotations
 
+import contextlib
 import math
 import re
 import unicodedata
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 
 from src.domain.model.nutrition.macros import Macros
@@ -189,12 +190,8 @@ def snapshot_from_ai_recipe(
     # written in the reader's language: the prompt pins the English working
     # name hard enough that asking the model to replace it only worked some
     # runs, so it is asked for a new field instead and that field wins.
-    name = str(
-        payload.get("local_name")
-        or payload.get("name")
-        or payload.get("dish_name")
-        or ""
-    ).strip()
+    working_name = str(payload.get("name") or payload.get("dish_name") or "").strip()
+    name = str(payload.get("local_name") or working_name).strip()
     lines = payload.get("ingredients")
     if not name or not isinstance(lines, list):
         return None
@@ -250,6 +247,9 @@ def snapshot_from_ai_recipe(
         origin_country=_short(payload.get("origin_country")),
         language=language,
         source=SOURCE_PLANNER_AI,
+        # Kept only when the reader's name replaced it: the photo is drawn
+        # from the English, which says what was actually cooked.
+        english_name=working_name if working_name and working_name != name else None,
     )
 
 
@@ -804,6 +804,7 @@ async def generate_week_of_dishes(
     cuisine_region: str | None = None,
     language: str | None = None,
     new_id=None,
+    on_dish: Callable[[SavedRecipeSnapshot], object] | None = None,
 ) -> WeekOfDishes:
     """Fill every slot with a dish the model wrote, each one checked.
 
@@ -813,6 +814,11 @@ async def generate_week_of_dishes(
     its own. Without ``price`` a dish keeps whatever macros the model
     volunteered, which for the recipe prompt is none. A slot nobody could fill is reported rather than quietly left
     holding something unsafe or a repeat of another day.
+
+    ``on_dish`` hears of each dish the moment its slot keeps it, so slow
+    work for that dish (its photo) can run while the next one is written
+    instead of after the whole week. It must not block, and nothing it
+    raises reaches the week.
     """
     mint = new_id or (lambda: uuid.uuid4().hex)
     dishes: dict[tuple[int, int], SavedRecipeSnapshot] = {}
@@ -889,6 +895,8 @@ async def generate_week_of_dishes(
                 unfilled.append(request.slot)
                 continue
             dishes[request.slot] = snapshot
+            if on_dish is not None:
+                _tell(on_dish, snapshot)
             taken.add(dish_key(snapshot.name))
             day_dishes.setdefault(request.day_index, []).append(snapshot.name)
             protein = main_protein(snapshot)
@@ -902,6 +910,14 @@ async def generate_week_of_dishes(
     return WeekOfDishes(
         dishes=dishes, rejected=tuple(rejected), unfilled=tuple(unfilled)
     )
+
+
+def _tell(
+    on_dish: Callable[[SavedRecipeSnapshot], object], dish: SavedRecipeSnapshot
+) -> None:
+    """Pass a kept dish on. A listener's mistake never costs the week."""
+    with contextlib.suppress(Exception):
+        on_dish(dish)
 
 
 async def _dish_names(
