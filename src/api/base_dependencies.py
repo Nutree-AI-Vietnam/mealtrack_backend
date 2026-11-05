@@ -265,6 +265,9 @@ def _register_local_insight_hook() -> None:
     """Write meal insights to Docker Redis when the Worker cannot reach it (development only)."""
     if settings.ENVIRONMENT != "development":
         return
+    # In-process event handling already generates insights in every environment.
+    if settings.INTEGRATION_EVENT_TRANSPORT == "in_process":
+        return
     from src.api.services.local_meal_insight_cache import (
         LocalMealInsightWriter,
         redis_url_is_local,

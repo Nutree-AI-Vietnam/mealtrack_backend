@@ -7,31 +7,15 @@ from src.infra.config.settings import Settings
 def test_transport_defaults_to_cloudflare_queue(monkeypatch):
     monkeypatch.delenv("INTEGRATION_EVENT_TRANSPORT", raising=False)
 
-    settings = Settings(_env_file=None)
-
-    assert settings.INTEGRATION_EVENT_TRANSPORT == "cloudflare_queue"
-    assert settings.INTEGRATION_EVENT_STREAM_MAXLEN == 20_000
+    assert Settings(_env_file=None).INTEGRATION_EVENT_TRANSPORT == "cloudflare_queue"
 
 
-def test_transport_reads_redis_stream_from_env(monkeypatch):
-    monkeypatch.setenv("INTEGRATION_EVENT_TRANSPORT", "redis_stream")
+def test_transport_reads_in_process_from_env(monkeypatch):
+    monkeypatch.setenv("INTEGRATION_EVENT_TRANSPORT", "in_process")
 
-    settings = Settings(_env_file=None)
-
-    assert settings.INTEGRATION_EVENT_TRANSPORT == "redis_stream"
+    assert Settings(_env_file=None).INTEGRATION_EVENT_TRANSPORT == "in_process"
 
 
 def test_unknown_transport_fails_at_startup():
     with pytest.raises(ValidationError):
-        Settings(INTEGRATION_EVENT_TRANSPORT="redis-stream", _env_file=None)
-
-
-def test_stream_maxlen_must_be_positive():
-    with pytest.raises(ValidationError):
-        Settings(INTEGRATION_EVENT_STREAM_MAXLEN=0, _env_file=None)
-
-
-def test_event_redis_defaults_to_the_cache_redis(monkeypatch):
-    monkeypatch.delenv("INTEGRATION_EVENT_REDIS_URL", raising=False)
-
-    assert Settings(_env_file=None).INTEGRATION_EVENT_REDIS_URL == ""
+        Settings(INTEGRATION_EVENT_TRANSPORT="redis_stream", _env_file=None)

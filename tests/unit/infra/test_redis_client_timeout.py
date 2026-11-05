@@ -16,9 +16,9 @@ def test_connection_pool_has_socket_timeout():
         RedisClient(redis_url="redis://localhost:6379")
         call_kwargs = mock_from_url.call_args[1]
         assert "socket_timeout" in call_kwargs, "socket_timeout must be set"
-        assert (
-            "socket_connect_timeout" in call_kwargs
-        ), "socket_connect_timeout must be set"
+        assert "socket_connect_timeout" in call_kwargs, (
+            "socket_connect_timeout must be set"
+        )
         assert call_kwargs["socket_timeout"] > 0
         assert call_kwargs["socket_connect_timeout"] > 0
 
@@ -95,8 +95,10 @@ async def test_delete_pattern_uses_scan_not_keys():
     client = RedisClient.__new__(RedisClient)
 
     deleted_keys = []
+    scans: list[tuple[str, int]] = []
 
-    async def fake_scan_iter(match):
+    async def fake_scan_iter(match, count):
+        scans.append((match, count))
         for k in ["user:abc:macros:2026-01-01", "user:abc:macros:2026-01-02"]:
             yield k
 
@@ -116,6 +118,34 @@ async def test_delete_pattern_uses_scan_not_keys():
     assert "user:abc:macros:2026-01-02" in deleted_keys
     mock_client.delete.assert_awaited_once()
     assert mock_client.keys.call_count == 0  # must NOT use blocking KEYS
+    # Redis' default COUNT 10 would walk the keyspace in 100x more round trips.
+    assert scans == [("user:abc:macros:*", 1_000)]
+
+
+@pytest.mark.asyncio
+async def test_delete_if_revision_not_newer_fences_and_deletes_in_one_script():
+    from src.infra.cache.redis_client import RedisClient
+
+    client = RedisClient.__new__(RedisClient)
+    mock_client = AsyncMock()
+    mock_client.eval = AsyncMock(return_value=1)
+    client.client = mock_client
+    client._loop_id = None
+
+    async def connected():
+        return None
+
+    client.connect = connected
+
+    assert await client.delete_if_revision_not_newer("meal_insight:m1", 42, 600)
+
+    script, numkeys, *args = mock_client.eval.await_args.args
+    assert numkeys == 2
+    assert args == ["meal_insight:m1", "meal_insight:m1:__revision", "42", "600"]
+    assert "DEL" in script and "tonumber(current) > tonumber(ARGV[1])" in script
+
+    mock_client.eval = AsyncMock(return_value=0)
+    assert not await client.delete_if_revision_not_newer("meal_insight:m1", 41, 600)
 
 
 class _Pipeline:

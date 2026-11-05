@@ -15,6 +15,11 @@ from redis.exceptions import RedisError
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
+# SCAN visits COUNT slots of the whole keyspace per call however few keys
+# match, so a pattern delete costs keyspace / COUNT round trips. Redis
+# defaults to 10; 1,000 keeps each call short and makes 100 times fewer.
+SCAN_COUNT = 1_000
+
 
 def _safe_redis_log_label(url: str) -> str:
     """Return scheme + host + port for logs; never userinfo (password)."""
@@ -187,6 +192,36 @@ class RedisClient:
 
         return await self._with_client("SET_IF_REVISION_NEWER", operation, False, key)
 
+    async def delete_if_revision_not_newer(
+        self, key: str, revision: int, ttl: int
+    ) -> bool:
+        """Delete a projection and record its revision unless a newer one is stored.
+
+        The recorded revision fences out older writes still in flight. False
+        when a newer revision owns the key or Redis is unavailable.
+        """
+
+        revision_key = f"{key}:__revision"
+        script = """
+        local current = redis.call('GET', KEYS[2])
+        if current and tonumber(current) > tonumber(ARGV[1]) then
+            return 0
+        end
+        redis.call('SET', KEYS[2], ARGV[1], 'EX', ARGV[2])
+        redis.call('DEL', KEYS[1])
+        return 1
+        """
+
+        async def operation(client: redis.Redis) -> bool:
+            result = await client.eval(
+                script, 2, key, revision_key, str(revision), str(ttl)
+            )
+            return bool(result)
+
+        return await self._with_client(
+            "DELETE_IF_REVISION_NOT_NEWER", operation, False, key
+        )
+
     async def delete(self, key: str) -> bool:
         """Delete a cached key."""
 
@@ -236,7 +271,7 @@ class RedisClient:
                 deleted += len(batch)
                 batch.clear()
 
-            async for key in client.scan_iter(match=pattern):
+            async for key in client.scan_iter(match=pattern, count=SCAN_COUNT):
                 batch.append(key)
                 if len(batch) >= 100:
                     await flush()

@@ -258,6 +258,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Event bus eager init failed (non-fatal): %s", e)
 
+    # With INTEGRATION_EVENT_TRANSPORT=in_process this process handles its own
+    # integration events instead of the Cloudflare Queue and nutreeai_async.
+    if settings.INTEGRATION_EVENT_TRANSPORT == "in_process":
+        from src.api.base_dependencies import get_ai_model_manager, get_cache_service
+        from src.api.services.in_process_integration_events import (
+            register_in_process_event_handlers,
+        )
+        from src.bootstrap.integration_services import delete_firebase_account
+
+        register_in_process_event_handlers(
+            cache_getter=get_cache_service,
+            ai_getter=get_ai_model_manager,
+            delete_firebase_account=delete_firebase_account,
+        )
+        logger.info("Integration events handled in-process")
+
     # Runs the AI job worker only when AI_JOBS_WORKER_ENABLED is set.
     try:
         from src.api.dependencies.ai_jobs import start_ai_jobs_worker
@@ -309,6 +325,10 @@ async def lifespan(app: FastAPI):
     # Late food-search work writes the cache and the catalog; finish it first.
     await drain_food_search_background_work()
     await drain_integration_event_publisher()
+    # In-process event handlers use the cache and Firebase pool closed below.
+    from src.app.events.in_process_event_router import in_process_event_router
+
+    in_process_event_router.clear()
     shutdown_firebase_executor()
 
     # Disconnect cache

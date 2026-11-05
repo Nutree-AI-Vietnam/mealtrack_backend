@@ -23,7 +23,7 @@ settings, wiring from adapters, and live health from OpenAPI `/docs`.
 | Redis provider budget | **Required for provider-origin manual writes** | Fail closed with `NUTRITION_PROVIDER_UNAVAILABLE` |
 | Redis meal-suggestion sessions | **Required transient state** (current design) | Session writes fail when store unavailable |
 | Cloudflare Queue integration | **Required** while `INTEGRATION_EVENT_TRANSPORT=cloudflare_queue` (default) | Best-effort post-commit publication; a failed publish is logged and the event is lost |
-| Redis stream integration transport | **Required** while `INTEGRATION_EVENT_TRANSPORT=redis_stream` | Best-effort post-commit `XADD` to `REDIS_URL`; a failed publish is logged and the event is lost |
+| In-process integration events | **Active** while `INTEGRATION_EVENT_TRANSPORT=in_process` | Background tasks in the API process; a failing handler is logged and skipped, work running at shutdown is dropped after the 5 s drain |
 | Upstash Redis REST for Worker deletes | **Required for the Queue consumer** | Worker retries, then DLQ, on Redis/network/delete failures |
 | OpenAI translation | **Optional read-path localization** | Return canonical local/provider results without translated names; do not block startup or writes |
 | OpenAI, FatSecret, USDA, OFF, Brave, image stock APIs | **Optional enrichment** | Degrade to local/prior results when safe |
@@ -70,7 +70,7 @@ durable.
 | Food providers (USDA, FatSecret, OFF, Brave) | `src/infra/adapters/food_data_service.py`, `fat_secret_service.py`, `open_food_facts_service.py`, `brave_search_nutrition_service.py` |
 | Translation | `src/infra/adapters/openai_translation_adapter.py` |
 | Cloudflare Queue publisher | `src/infra/adapters/cloudflare_queue_publisher.py` |
-| Redis stream publisher (alternative transport) | `src/infra/adapters/redis_stream_event_publisher.py`; selected in `src/bootstrap/integration_services.py` |
+| In-process event handling | `src/app/events/in_process_event_router.py`; handlers in `src/api/services/in_process_integration_events.py`; selected in `src/bootstrap/integration_services.py` |
 | Stock / generated images | `pexels_image_adapter.py`, `unsplash_image_adapter.py`, `imagen_image_generator.py`, `pollinations_image_generator.py`, `cloudflare_workers_image_generator.py` |
 | RevenueCat | `src/infra/adapters/revenuecat_adapter.py`; webhook entry in `src/api/routes/v1/webhooks.py` with sibling modules `webhook_subscription_lifecycle.py`, `webhook_lifetime_purchase.py`, `webhook_subscription_rows.py`, `webhook_lifecycle_events.py`, `webhook_referral_funnel.py`, `webhook_lookup_parsing.py` |
 | Google Play Developer API | `src/infra/adapters/google_play_subscription_adapter.py`, `google_play_auth.py`; webhook side `webhook_play_renewal_cancel.py` |
@@ -178,20 +178,20 @@ optional caches.
 
 ### Integration event transport
 
-- `INTEGRATION_EVENT_TRANSPORT` picks how events reach `nutreeai_async`:
-  `cloudflare_queue` (default) or `redis_stream`. The backend publishes through
-  exactly one transport; never both, or the Worker processes events twice.
-- `redis_stream` appends the same envelope as compact JSON in the `event` field
-  of `nutreeai_async:events:<ENVIRONMENT>`, trimmed to about
-  `INTEGRATION_EVENT_STREAM_MAXLEN` entries, in `INTEGRATION_EVENT_REDIS_URL`
-  (blank falls back to `REDIS_URL`). The `nutreeai_async` background worker
-  reads it over Render's private network through the `nutreeai_async`
-  consumer group.
-- Switch an environment only after its worker consumes the stream. Give the
-  stream a Key Value instance with `noeviction` and persistence on: the cache
-  instance runs `allkeys_lru` without persistence. Consumer contract and
-  rollout:
-  [`decisions/261105-0248-redis-stream-transport-for-nutreeai-async.md`](decisions/261105-0248-redis-stream-transport-for-nutreeai-async.md).
+- `INTEGRATION_EVENT_TRANSPORT` picks where events go: `cloudflare_queue`
+  (default, consumed by `nutreeai_async`) or `in_process`. The backend uses
+  exactly one; never both, or the follow-up work runs twice.
+- `in_process` hands each event to `InProcessIntegrationEventRouter` on the
+  best-effort publisher's background tasks. Handlers registered at startup
+  (`src/api/services/in_process_integration_events.py`) generate meal value
+  insights, delete Firebase accounts, and purge profile, cheat-day and
+  saved-suggestion caches. Other event types need no follow-up.
+- Meal insights are fenced by the event's `occurred_at`, so an older
+  generation never overwrites a newer one and edits or deletes clear the old
+  insight. Firebase deletion retries three times and logs the UID at ERROR
+  for `scripts/delete_missed_firebase_accounts.py` after the last failure.
+  Rollout and retirement of the worker:
+  [`decisions/261105-0248-retire-nutreeai-async.md`](decisions/261105-0248-retire-nutreeai-async.md).
 
 ### Cloudflare integration event orchestration
 

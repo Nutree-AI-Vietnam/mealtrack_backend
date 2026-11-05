@@ -1,11 +1,17 @@
-"""Fill meal_insight Redis keys when the API talks to local Docker Redis."""
+"""Generate meal value insights in the API process.
+
+`MealInsightEventHandler` handles meal integration events when
+``INTEGRATION_EVENT_TRANSPORT=in_process``, in every environment.
+`LocalMealInsightWriter` fills keys in local Docker Redis for development
+while events still go to the Queue.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
@@ -20,6 +26,9 @@ from src.domain.services.meal_value_insight_service import MealValueInsightServi
 logger = logging.getLogger(__name__)
 
 MEAL_INSIGHT_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
+# The revision outlives the insight so a late write cannot revive a cleared one.
+MEAL_INSIGHT_FENCE_TTL_SECONDS = 8 * 24 * 60 * 60
+MEAL_DELETED_EVENT = "meal.deleted.v1"
 _LOCAL_REDIS_HOSTS = {"localhost", "127.0.0.1", "::1", "mealtrack_redis"}
 
 
@@ -95,6 +104,80 @@ class LocalMealInsightWriter:
             meal_id,
             occurred_at.isoformat(),
         )
+
+
+class MealInsightEventHandler:
+    """Turn a meal integration event into the meal's stored value insights.
+
+    Every meal event first clears the stored insight and records the event's
+    revision (its ``occurred_at``): an edit drops insights written for the old
+    meal, and an older generation still in flight can no longer overwrite a
+    newer one. Created and updated events then generate from the event's
+    insight snapshot; a re-published event with the same revision regenerates.
+    """
+
+    def __init__(
+        self,
+        cache_getter: Callable[[], Any],
+        ai_getter: Callable[[], Any],
+    ) -> None:
+        self._cache_getter = cache_getter
+        self._ai_getter = ai_getter
+
+    async def __call__(self, payload: dict[str, Any]) -> None:
+        cache = self._cache_getter()
+        if cache is None or not getattr(cache, "enabled", True):
+            return
+        data = payload.get("data") or {}
+        meal_id = str(data.get("meal_id") or payload.get("aggregate_id") or "")
+        revision = event_revision(payload.get("occurred_at"))
+        if not meal_id or revision is None:
+            logger.info("meal insight event skipped: missing meal id or occurred_at")
+            return
+        key = MealValueInsightService.cache_key_for_meal(meal_id)
+        if not await cache.invalidate_with_revision(
+            key, revision, MEAL_INSIGHT_FENCE_TTL_SECONDS
+        ):
+            return
+        insight = data.get("insight")
+        if payload.get("event_type") == MEAL_DELETED_EVENT or not isinstance(
+            insight, dict
+        ):
+            return
+        raw = await self._ai_getter().generate(
+            purpose=ModelPurpose.GENERAL,
+            prompt=_build_prompt(insight),
+            system_message=_system_prompt(insight.get("language")),
+            response_type="json",
+            max_tokens=1200,
+        )
+        parsed = parse_ai_result(raw)
+        if parsed is None:
+            logger.info("meal insight payload invalid meal_id=%s", meal_id)
+            return
+        stored = await cache.set_json_with_revision(
+            key,
+            serialize_insights(parsed),
+            revision,
+            MEAL_INSIGHT_CACHE_TTL_SECONDS,
+        )
+        logger.info("meal insight generated meal_id=%s stored=%s", meal_id, stored)
+
+
+def event_revision(occurred_at: Any) -> int | None:
+    """Milliseconds since the epoch of an event's ``occurred_at``."""
+    if isinstance(occurred_at, datetime):
+        moment = occurred_at
+    elif isinstance(occurred_at, str):
+        try:
+            moment = datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return int(moment.timestamp() * 1000)
 
 
 def _system_prompt(language: str | None) -> str:

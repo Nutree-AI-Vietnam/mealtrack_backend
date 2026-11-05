@@ -17,9 +17,12 @@ from src.domain.cache.cache_invalidation_operations import (
     DELETE_KEY,
     DELETE_PATTERN,
     build_activity_calories_invalidation_operations,
+    build_cheat_day_invalidation_operations,
     build_hydration_invalidation_operations,
     build_meal_invalidation_operations,
     build_movement_invalidation_operations,
+    build_profile_invalidation_operations,
+    build_saved_suggestion_invalidation_operations,
     build_supplement_invalidation_operations,
 )
 from src.domain.ports.cache_port import CachePort
@@ -188,6 +191,60 @@ async def apply_supplement_write_cache_invalidation(
     except Exception:
         logger.warning(
             "supplement write cache invalidation failed user_id=%s",
+            user_id,
+            exc_info=True,
+        )
+
+
+# Profile, cheat-day and saved-suggestion writes are purged from their
+# integration events by the in-process router, after the write has returned:
+# their builders include pattern deletes, which never run on the write path.
+
+
+async def apply_profile_cache_invalidation(
+    cache: CachePort | None, user_id: str
+) -> None:
+    """Purge the user's targets, totals and budget keys after a profile write."""
+    if cache is None or not user_id:
+        return
+    try:
+        await _apply_operations(cache, build_profile_invalidation_operations(user_id))
+    except Exception:
+        logger.warning(
+            "profile cache invalidation failed user_id=%s", user_id, exc_info=True
+        )
+
+
+async def apply_cheat_day_cache_invalidation(
+    cache: CachePort | None, user_id: str, cheat_day: date | datetime
+) -> None:
+    """Purge the cheat day's weekly budget and progress keys."""
+    if cache is None or not user_id:
+        return
+    try:
+        await _apply_operations(
+            cache,
+            build_cheat_day_invalidation_operations(user_id, _as_date(cheat_day)),
+        )
+    except Exception:
+        logger.warning(
+            "cheat day cache invalidation failed user_id=%s", user_id, exc_info=True
+        )
+
+
+async def apply_saved_suggestion_cache_invalidation(
+    cache: CachePort | None, user_id: str
+) -> None:
+    """Purge the user's saved suggestions list."""
+    if cache is None or not user_id:
+        return
+    try:
+        await _apply_operations(
+            cache, build_saved_suggestion_invalidation_operations(user_id)
+        )
+    except Exception:
+        logger.warning(
+            "saved suggestion cache invalidation failed user_id=%s",
             user_id,
             exc_info=True,
         )
