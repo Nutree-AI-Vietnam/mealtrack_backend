@@ -30,11 +30,11 @@ class MealListCacheService:
         user_id: str, revision: int, timezone_str: str, language: str
     ) -> str:
         tz_hash = hashlib.sha256(timezone_str.encode("utf-8")).hexdigest()[:12]
-        return f"user:{user_id}:recent-meals:v1:{revision}:{tz_hash}:{language}"
+        return f"user:{user_id}:recent-meals:v2:{revision}:{tz_hash}:{language}"
 
     @staticmethod
     def _favorite_key(user_id: str, revision: int, language: str) -> str:
-        return f"user:{user_id}:favorite-meals:v1:{revision}:{language}"
+        return f"user:{user_id}:favorite-meals:v2:{revision}:{language}"
 
     async def get_revision(self, user_id: str) -> int:
         """Get the current list revision for a user, defaulting to 0."""
