@@ -29,6 +29,10 @@ from src.app.services.describe_movement_items import (
     DescribedActivity,
     normalize_activities,
 )
+from src.app.services.describe_unlisted_estimates import (
+    UNLISTED_ESTIMATE_TIMEOUT_SECONDS,
+    fill_unlisted_estimates,
+)
 from src.domain.model.ai.describe_log_contracts import ActivityLogParse
 from src.domain.model.movement import MovementEntry
 from src.domain.ports.integration_event_publisher_port import (
@@ -79,7 +83,9 @@ class DescribeMovementCommandHandler(EventHandler[DescribeMovementCommand, dict]
             self.uow_factory,
             cmd.user_id,
             key,
-            lease_seconds=lease_seconds_for(self.ai_timeout_seconds),
+            lease_seconds=lease_seconds_for(
+                self.ai_timeout_seconds + UNLISTED_ESTIMATE_TIMEOUT_SECONDS
+            ),
             log=lambda reservation: self._log(cmd, reservation),
         )
 
@@ -94,8 +100,21 @@ class DescribeMovementCommandHandler(EventHandler[DescribeMovementCommand, dict]
             purpose="describe_movement",
             timeout_seconds=self.ai_timeout_seconds,
         )
+        estimated = await fill_unlisted_estimates(
+            self.meal_generation_service,
+            activities=parse["items"],
+            drinks=[],
+            timeout_seconds=min(
+                self.ai_timeout_seconds, UNLISTED_ESTIMATE_TIMEOUT_SECONDS
+            ),
+        )
         described = normalize_activities(parse["items"])
         if not described.activities:
+            logger.info(
+                "[DESCRIBE-LOG-NOTHING] kind=movement raw_items=%d dropped=%d",
+                len(parse["items"]),
+                described.dropped,
+            )
             raise BusinessLogicException(
                 "No activity was recognised in the sentence",
                 "DESCRIBE_NOTHING_RECOGNIZED",
@@ -117,9 +136,11 @@ class DescribeMovementCommandHandler(EventHandler[DescribeMovementCommand, dict]
         )
         logger.info(
             "[DESCRIBE-LOG-COMPLETE] kind=movement items=%d unlisted=%d "
-            "dropped=%d overflow=%d total_ms=%.0f",
+            "estimated=%d defaulted=%d dropped=%d overflow=%d total_ms=%.0f",
             len(saved),
             sum(1 for activity in described.activities if activity.activity_id is None),
+            estimated,
+            described.defaulted,
             described.dropped,
             described.overflow,
             (time.monotonic() - started) * 1000,

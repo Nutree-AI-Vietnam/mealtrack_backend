@@ -96,3 +96,39 @@ class ActivityLogParse(BaseModel):
     items: list[ActivityLogItem] = Field(
         default_factory=list, description="Empty when the sentence names no activity"
     )
+
+
+class UnlistedActivityEstimate(BaseModel):
+    """The MET of one activity the catalog does not list."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    ref: str = Field(..., description="The line's ref, unchanged")
+    met: float = Field(
+        ...,
+        description="MET at the stated effort from the Compendium of Physical Activities",
+    )
+
+
+class UnlistedDrinkEstimate(BaseModel):
+    """Per-100 ml values of one drink the catalog does not list."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    ref: str = Field(..., description="The line's ref, unchanged")
+    unlisted: UnlistedDrinkNutrition = Field(
+        ..., description="The drink's typical values per 100 ml"
+    )
+
+
+class UnlistedEstimateParse(BaseModel):
+    """Numbers for the items a first read named but left blank."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    activities: list[UnlistedActivityEstimate] = Field(
+        default_factory=list, description="One entry per activity line"
+    )
+    drinks: list[UnlistedDrinkEstimate] = Field(
+        default_factory=list, description="One entry per drink line"
+    )

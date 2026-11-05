@@ -13,6 +13,7 @@ from src.domain.model.ai_jobs.constants import (
 )
 from src.domain.model.ai_jobs.enums import (
     ACTIVE_AI_JOB_STATUSES,
+    DESCRIBE_AI_JOB_TYPES,
     ENQUEUEABLE_AI_JOB_TYPES,
     NOTIFIABLE_AI_JOB_STATUSES,
     TERMINAL_AI_JOB_STATUSES,
@@ -41,6 +42,7 @@ __all__ = [
     "AI_JOB_NOTIFY_STALE_AFTER",
     "AI_JOB_OPEN_WINDOW",
     "AI_JOB_POLL_INTERVAL_MS",
+    "DESCRIBE_AI_JOB_TYPES",
     "ENQUEUEABLE_AI_JOB_TYPES",
     "NOTIFIABLE_AI_JOB_STATUSES",
     "TERMINAL_AI_JOB_STATUSES",

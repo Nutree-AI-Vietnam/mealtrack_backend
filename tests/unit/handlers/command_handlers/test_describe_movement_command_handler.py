@@ -14,7 +14,9 @@ from src.app.events.movement.local_cache_invalidation import (
 from src.app.handlers.command_handlers.describe_movement_command_handler import (
     DescribeMovementCommandHandler,
 )
+from src.app.services.describe_movement_items import UNLISTED_DEFAULT_MET
 from src.domain.services.movement_catalog_service import active_kcal, get_met
+from src.domain.services.prompts.system_prompts import SystemPrompts
 from src.domain.utils.timezone_utils import utc_now
 
 USER_ID = "user-1"
@@ -257,32 +259,108 @@ async def test_kcal_is_clamped_to_the_log_route_bounds(cache_hook):
 
 
 @pytest.mark.asyncio
-async def test_bad_items_are_dropped_and_overflow_is_cut(cache_hook):
+async def test_nameless_items_are_dropped_and_overflow_is_cut(cache_hook):
     store = _Store()
     items = [
-        _item(None, "leo núi"),  # unlisted without a MET
         _item(None, "", met=5),
         *[_item("walking", f"đi bộ {n}") for n in range(20)],
     ]
-    handler, _ = _handler(store, {"items": items})
+    handler, generation = _handler(store, {"items": items})
 
     result = await handler.handle(_command(weight_kg=62))
 
     assert len(result["entries"]) == 8
     assert {entry["activity_id"] for entry in result["entries"]} == {"walking"}
+    assert generation.generate_meal_plan_async.await_count == 1
 
 
 @pytest.mark.asyncio
 async def test_nothing_recognised_saves_nothing(cache_hook):
     store = _Store()
-    handler, _ = _handler(store, {"items": [_item(None, "leo núi")]})
+    handler, generation = _handler(store, {"items": []})
 
     with pytest.raises(BusinessLogicException) as exc_info:
-        await handler.handle(_command("leo núi"))
+        await handler.handle(_command("hôm nay trời đẹp"))
 
     assert exc_info.value.error_code == "DESCRIBE_NOTHING_RECOGNIZED"
     assert store.entries == [] and len(store.uows) == 1
+    assert generation.generate_meal_plan_async.await_count == 1
     cache_hook.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_unlisted_activity_without_a_met_is_asked_about_once_more(cache_hook):
+    store = _Store()
+    handler, generation = _handler(
+        store,
+        {"items": [_item(None, "leo núi", minutes=120, intensity="hard")]},
+        {"activities": [{"ref": "a0", "met": 8.0}], "drinks": []},
+    )
+
+    result = await handler.handle(_command("leo núi 2 tiếng gắt", weight_kg=70))
+
+    (hike,) = result["entries"]
+    assert (hike["activity_id"], hike["activity_name"]) == (None, "leo núi")
+    assert hike["kcal_burned"] == active_kcal(8.0, 70, 120)
+    second = generation.generate_meal_plan_async.await_args_list[1].kwargs
+    assert second["prompt"] == "<sentence>\na0 | activity | leo núi | hard\n</sentence>"
+    assert second["system_message"] == SystemPrompts.get_unlisted_estimate_prompt()
+
+
+@pytest.mark.parametrize(
+    "second_read",
+    [
+        ConnectionError("model down"),
+        {"activities": [], "drinks": []},
+        {"activities": [{"ref": "a7", "met": 9.0}], "drinks": []},
+    ],
+)
+@pytest.mark.asyncio
+async def test_unlisted_activity_keeps_a_default_met_when_the_second_read_fails(
+    cache_hook, second_read
+):
+    store = _Store()
+    handler, _ = _handler(
+        store,
+        {
+            "items": [
+                _item(None, "leo núi", minutes=60, intensity="hard"),
+                _item(None, "nhảy zumba", minutes=30),
+            ]
+        },
+        second_read,
+    )
+
+    result = await handler.handle(_command("leo núi 1 tiếng, nhảy zumba", weight_kg=62))
+
+    hike, zumba = result["entries"]
+    assert hike["kcal_burned"] == active_kcal(UNLISTED_DEFAULT_MET["hard"], 62, 60)
+    assert zumba["kcal_burned"] == active_kcal(UNLISTED_DEFAULT_MET["moderate"], 62, 30)
+    assert len(store.entries) == 2
+
+
+@pytest.mark.asyncio
+async def test_catalog_id_slips_still_price_from_the_catalog(cache_hook):
+    store = _Store()
+    handler, generation = _handler(
+        store,
+        {
+            "items": [
+                _item("Running", "chạy", minutes=30),
+                _item("gym strength", "tập tạ", minutes=45),
+                _item(None, "Đạp xe", minutes=40),
+            ]
+        },
+    )
+
+    result = await handler.handle(_command(weight_kg=62))
+
+    assert [entry["activity_id"] for entry in result["entries"]] == [
+        "running",
+        "gym_strength",
+        "cycling",
+    ]
+    assert generation.generate_meal_plan_async.await_count == 1
 
 
 @pytest.mark.asyncio

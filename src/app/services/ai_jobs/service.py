@@ -206,6 +206,16 @@ class AiJobService:
             self._wakeup.notify()
         return job, created
 
+    async def has_job(self, *, user_id: str, job_id: str) -> bool:
+        """Whether this user already queued ``job_id``. Raises
+        AiJobsUnavailableError while jobs are switched off, so a caller that
+        spends something before enqueueing (the Ghi nhanh quota) checks here
+        first and never spends it on a job that cannot be queued."""
+        await self._require_writable()
+        async with self._uow_factory() as uow:
+            job = await uow.ai_jobs.get(user_id=user_id, job_id=job_id)
+        return job is not None
+
     async def get(self, *, user_id: str, job_id: str) -> AiJob:
         await self._require_schema()
         async with self._uow_factory() as uow:

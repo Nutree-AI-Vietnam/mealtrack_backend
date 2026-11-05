@@ -27,6 +27,7 @@ from src.app.services.ai_jobs import (
     PushTokenService,
     RecipeImportJobExecutor,
 )
+from src.app.services.ai_jobs.describe_executor import DescribeJobExecutor, ToResult
 from src.app.services.ai_jobs.executors import AiJobExecutor, Send
 from src.app.services.ai_jobs.weekly_plan_executor import WeeklyPlanJobExecutor
 from src.app.services.chat_turn_orchestrator import ChatTurnOrchestrator
@@ -107,7 +108,9 @@ def build_ai_job_executors(
     orchestrator_factory: Callable[[], ChatTurnOrchestrator],
     parse_text_result: Callable[[Any], dict[str, Any]],
     recipe_import_result: Callable[[Any], dict[str, Any]],
+    describe_results: Mapping[AiJobType, ToResult],
 ) -> dict[AiJobType, AiJobExecutor]:
+    describe = DescribeJobExecutor(send=send, to_result=describe_results)
     return {
         AiJobType.MEAL_SCAN: MealScanJobExecutor(
             send=send, uow_factory=AsyncUnitOfWork
@@ -120,6 +123,9 @@ def build_ai_job_executors(
             send=send, to_result=recipe_import_result
         ),
         AiJobType.WEEKLY_PLAN: WeeklyPlanJobExecutor(send=send),
+        AiJobType.DESCRIBE_LOG: describe,
+        AiJobType.DESCRIBE_MOVEMENT: describe,
+        AiJobType.DESCRIBE_HYDRATION: describe,
     }
 
 

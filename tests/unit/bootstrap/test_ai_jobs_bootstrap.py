@@ -375,12 +375,14 @@ def test_build_executors_covers_every_job_type():
     orchestrator_factory = MagicMock()
     parse_text_result = MagicMock()
     recipe_import_result = MagicMock()
+    describe_results = {AiJobType.DESCRIBE_LOG: MagicMock()}
 
     executors = ai_jobs_bootstrap.build_ai_job_executors(
         send=send,
         orchestrator_factory=orchestrator_factory,
         parse_text_result=parse_text_result,
         recipe_import_result=recipe_import_result,
+        describe_results=describe_results,
     )
 
     assert set(executors) == set(AiJobType)

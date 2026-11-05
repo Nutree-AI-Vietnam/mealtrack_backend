@@ -7,8 +7,8 @@
 **Code:** rules in `src/domain/model/ai_jobs/`, use cases, worker and notifier
 in `src/app/services/ai_jobs/`, wiring in `src/bootstrap/ai_jobs.py`
 
-A meal scan, a text parse, a recipe import or a chat reply can run as a
-background job. The
+A meal scan, a text parse, a recipe import, a Ghi nhanh sentence or a chat
+reply can run as a background job. The
 app queues it and moves on, a worker runs it, and the result shows up in the
 app. A user who has left the app gets a push instead.
 
@@ -49,7 +49,7 @@ app. A user who has left the app gets a push instead.
 
 ## Queue a job — `POST /v1/ai-jobs`
 
-Body: `{"id": "<client UUID>", "type": "meal_scan" | "parse_text" | "recipe_import", "input": {…}}`
+Body: `{"id": "<client UUID>", "type": "meal_scan" | "parse_text" | "recipe_import" | "describe_log" | "describe_movement" | "describe_hydration", "input": {…}}`
 
 | Status | Meaning |
 |--------|---------|
@@ -67,6 +67,12 @@ Body: `{"id": "<client UUID>", "type": "meal_scan" | "parse_text" | "recipe_impo
   (`429 RECIPE_IMPORT_DAILY_LIMIT`); see [Recipe import](api-recipe-import.md).
 - `chat` cannot be queued here (`400 INVALID_JOB_TYPE`); see
   [Chat turns](#chat-turns).
+- Ghi nhanh jobs (`describe_*`, see [below](#ghi-nhanh-jobs)) run the
+  quick-log guard of their route when queued: switch, Premium, daily quota
+  and sentence, with the same errors (`503 FEATURE_DISABLED`,
+  `402 SUBSCRIPTION_REQUIRED`, `429 DESCRIBE_DAILY_LIMIT`,
+  `400 DESCRIBE_TEXT_REJECTED`). The quota is spent once per job id; while
+  jobs are switched off the request is refused before it.
 - The job's language is the request's `Accept-Language`. It picks the push
   copy.
 - Rate limit: 30 a minute per user, counted separately for queueing and
@@ -80,10 +86,37 @@ Body: `{"id": "<client UUID>", "type": "meal_scan" | "parse_text" | "recipe_impo
 | `parse_text` | The same body `POST /v1/meals/parse-text` returns. Finding no foods is still a result |
 | `chat` | `{"thread_id": "…", "assistant_message_id": "…"}`. The app reloads the thread to show the reply |
 | `recipe_import` | `{"recipe": {…}}`, the unsaved draft `POST /v1/recipe-imports/extract` returns. The app shows it for review and saves it with `POST /v1/recipe-imports/save` |
+| `describe_log` | The body `POST /v1/log/describe` returns, without the saved meals' detail (`meal` is null; the app reloads the day). A sentence that saved nothing fails with `DESCRIBE_NOTHING_RECOGNIZED` instead of answering `nothing_found` |
+| `describe_movement` | The body `POST /v1/movement/describe` returns |
+| `describe_hydration` | The body `POST /v1/hydration/describe` returns |
 
 A meal scan's meal id is fixed when the job is queued, so a retry after a lost
 lease returns the meal that was already saved and never analyzes the image
 twice.
+
+### Ghi nhanh jobs
+
+The water, activity, supplement and + panel quick-log boxes can hand their
+sentence off as a job, so the person can leave the app and get a push when
+it is logged.
+
+| Type | `input` (same fields as the route) |
+|------|------------------------------------|
+| `describe_log` | `text`, `local_date`, `local_time`, `kinds` (default all four) |
+| `describe_movement` | `text`, `target_date`, `weight_kg` |
+| `describe_hydration` | `text`, `target_date` |
+
+- `X-Timezone` is read when the job is queued and used for the day and the
+  quota, as on the route. `Accept-Language` is the job's language.
+- The job id is the sentence's replay key: an attempt that saved the entries
+  but lost its lease replays the saved reply instead of logging twice, and
+  `DELETE /v1/log/describe/{job_id}` undoes a `describe_log` job.
+- Ghi nhanh errors that retrying cannot fix are permanent:
+  `DESCRIBE_NOTHING_RECOGNIZED`, `DESCRIBE_TEXT_REJECTED`, `INVALID_DATE`,
+  `INVALID_TIME`, `IDEMPOTENCY_KEY_CONFLICT`. `AI_UNAVAILABLE` and
+  `IDEMPOTENCY_KEY_IN_PROGRESS` are retried automatically.
+- A describe attempt is not interrupted once it runs, like a meal scan, so a
+  cancelled sentence still finishes saving.
 
 ## Watch jobs
 
@@ -126,8 +159,9 @@ plus `meal_id` for a completed meal scan, or `error_code` for a failure.
 
 The push should open the result: `meal_id` opens the meal, `parse_text` opens
 the parse review for `job_id`, `recipe_import` opens the recipe review for
-`job_id`, `chat` opens the coach thread, and a failure opens the job's
-failure view.
+`job_id`, `chat` opens the coach thread, `describe_log` opens Home,
+`describe_movement` the activity list and `describe_hydration` the water
+screen, and a failure opens the job's failure view.
 
 ### Device tokens
 

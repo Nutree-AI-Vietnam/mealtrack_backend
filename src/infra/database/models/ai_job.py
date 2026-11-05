@@ -72,7 +72,9 @@ class AiJobORM(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "job_type IN ('chat', 'meal_scan', 'parse_text', 'recipe_import')",
+            "job_type IN ('chat', 'meal_scan', 'parse_text', 'recipe_import', "
+            "'weekly_plan', 'describe_log', 'describe_movement', "
+            "'describe_hydration')",
             name="ck_ai_jobs_job_type",
         ),
         CheckConstraint(
