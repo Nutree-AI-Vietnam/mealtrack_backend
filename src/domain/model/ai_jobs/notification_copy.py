@@ -18,6 +18,18 @@ _TITLES: dict[str, dict[tuple[AiJobType, AiJobStatus], str]] = {
         (AiJobType.RECIPE_IMPORT, AiJobStatus.FAILED): "We couldn't import your recipe",
         (AiJobType.WEEKLY_PLAN, AiJobStatus.COMPLETED): "Your week is planned",
         (AiJobType.WEEKLY_PLAN, AiJobStatus.FAILED): "We couldn't plan your week",
+        (AiJobType.DESCRIBE_LOG, AiJobStatus.COMPLETED): "Quick log saved",
+        (AiJobType.DESCRIBE_LOG, AiJobStatus.FAILED): "We couldn't log that",
+        (AiJobType.DESCRIBE_MOVEMENT, AiJobStatus.COMPLETED): "Your activity is logged",
+        (
+            AiJobType.DESCRIBE_MOVEMENT,
+            AiJobStatus.FAILED,
+        ): "We couldn't log your activity",
+        (AiJobType.DESCRIBE_HYDRATION, AiJobStatus.COMPLETED): "Your drink is logged",
+        (
+            AiJobType.DESCRIBE_HYDRATION,
+            AiJobStatus.FAILED,
+        ): "We couldn't log your drink",
     },
     "vi": {
         (AiJobType.MEAL_SCAN, AiJobStatus.COMPLETED): "Bữa ăn của bạn đã sẵn sàng",
@@ -36,6 +48,21 @@ _TITLES: dict[str, dict[tuple[AiJobType, AiJobStatus], str]] = {
             AiJobStatus.COMPLETED,
         ): "Thực đơn tuần của bạn đã xong",
         (AiJobType.WEEKLY_PLAN, AiJobStatus.FAILED): "Chưa lên được thực đơn tuần",
+        (AiJobType.DESCRIBE_LOG, AiJobStatus.COMPLETED): "Ghi nhanh đã lưu",
+        (AiJobType.DESCRIBE_LOG, AiJobStatus.FAILED): "Chưa ghi nhận được",
+        (
+            AiJobType.DESCRIBE_MOVEMENT,
+            AiJobStatus.COMPLETED,
+        ): "Đã ghi nhận hoạt động",
+        (
+            AiJobType.DESCRIBE_MOVEMENT,
+            AiJobStatus.FAILED,
+        ): "Chưa ghi nhận được hoạt động",
+        (AiJobType.DESCRIBE_HYDRATION, AiJobStatus.COMPLETED): "Đã ghi nhận đồ uống",
+        (
+            AiJobType.DESCRIBE_HYDRATION,
+            AiJobStatus.FAILED,
+        ): "Chưa ghi nhận được đồ uống",
     },
 }
 
@@ -46,6 +73,9 @@ _COMPLETED_BODIES: dict[str, dict[AiJobType, str]] = {
         AiJobType.CHAT: "Tap to read the answer.",
         AiJobType.RECIPE_IMPORT: "Tap to review and save it.",
         AiJobType.WEEKLY_PLAN: "Tap to see what you are eating this week.",
+        AiJobType.DESCRIBE_LOG: "Tap to see what was added.",
+        AiJobType.DESCRIBE_MOVEMENT: "Tap to see what was added.",
+        AiJobType.DESCRIBE_HYDRATION: "Tap to see what was added.",
     },
     "vi": {
         AiJobType.MEAL_SCAN: "Chạm để xem thông tin dinh dưỡng.",
@@ -53,6 +83,9 @@ _COMPLETED_BODIES: dict[str, dict[AiJobType, str]] = {
         AiJobType.CHAT: "Chạm để đọc câu trả lời.",
         AiJobType.RECIPE_IMPORT: "Chạm để xem lại và lưu.",
         AiJobType.WEEKLY_PLAN: "Chạm để xem tuần này ăn gì.",
+        AiJobType.DESCRIBE_LOG: "Chạm để xem những gì đã thêm.",
+        AiJobType.DESCRIBE_MOVEMENT: "Chạm để xem những gì đã thêm.",
+        AiJobType.DESCRIBE_HYDRATION: "Chạm để xem những gì đã thêm.",
     },
 }
 

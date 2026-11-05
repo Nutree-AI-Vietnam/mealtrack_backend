@@ -46,6 +46,9 @@ async def test_ai_job_capabilities_advertise_the_job_contract():
             "parse_text",
             "recipe_import",
             "weekly_plan",
+            "describe_log",
+            "describe_movement",
+            "describe_hydration",
         ],
         "max_attempts": 4,
         "poll_interval_ms": 2500,
@@ -119,6 +122,9 @@ def test_ai_job_capabilities_route(ready, status_code):
             "parse_text",
             "recipe_import",
             "weekly_plan",
+            "describe_log",
+            "describe_movement",
+            "describe_hydration",
         ]
     else:
         assert response.json() == {"detail": UNAVAILABLE}

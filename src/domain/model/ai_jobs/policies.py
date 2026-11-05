@@ -28,6 +28,13 @@ PERMANENT_NOT_RETRYABLE_CODES = frozenset(
         "INVALID_RECIPE_SOURCE",
         "RECIPE_URL_NOT_ALLOWED",
         "RECIPE_SOURCE_REJECTED",
+        # Ghi nhanh: the sentence named nothing of the kind asked for, the
+        # sentence or its day can't be logged, or the key was reused.
+        "DESCRIBE_NOTHING_RECOGNIZED",
+        "DESCRIBE_TEXT_REJECTED",
+        "INVALID_DATE",
+        "INVALID_TIME",
+        "IDEMPOTENCY_KEY_CONFLICT",
     }
 )
 # The AI gave a bad answer; another manual attempt may succeed, an automatic

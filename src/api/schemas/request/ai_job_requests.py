@@ -5,6 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
+from src.api.schemas.request.log_describe_requests import LogKind
 from src.domain.model.ai_jobs import AI_JOB_MAX_SEEN_IDS
 from src.domain.services.prompts.input_sanitizer import validate_refinement_items
 
@@ -17,7 +18,10 @@ class AiJobCreateRequest(BaseModel):
         ...,
         min_length=1,
         max_length=32,
-        description="meal_scan, parse_text or recipe_import",
+        description=(
+            "meal_scan, parse_text, recipe_import, describe_log, "
+            "describe_movement or describe_hydration"
+        ),
     )
     input: dict[str, Any] = Field(default_factory=dict)
 
@@ -45,6 +49,30 @@ class ParseTextJobInput(BaseModel):
     def validate_refinement_context(self) -> "ParseTextJobInput":
         self.current_items = validate_refinement_items(self.current_items)
         return self
+
+
+class DescribeLogJobInput(BaseModel):
+    """Same fields as ``POST /v1/log/describe``; the job id is the request_id."""
+
+    text: str = Field(..., min_length=1, max_length=300)
+    local_date: str | None = Field(default=None, max_length=10)
+    local_time: str | None = Field(default=None, max_length=5)
+    kinds: list[LogKind] | None = Field(default=None, min_length=1)
+
+
+class DescribeMovementJobInput(BaseModel):
+    """Same fields as ``POST /v1/movement/describe``."""
+
+    text: str = Field(..., min_length=1, max_length=300)
+    target_date: str | None = Field(default=None, max_length=10)
+    weight_kg: float | None = None
+
+
+class DescribeHydrationJobInput(BaseModel):
+    """Same fields as ``POST /v1/hydration/describe``."""
+
+    text: str = Field(..., min_length=1, max_length=300)
+    target_date: str | None = Field(default=None, max_length=10)
 
 
 class AiJobSeenRequest(BaseModel):

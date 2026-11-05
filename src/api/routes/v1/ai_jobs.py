@@ -1,4 +1,5 @@
-"""Background AI jobs: enqueue a meal scan, text parse or recipe import, then observe it.
+"""Background AI jobs: enqueue a meal scan, text parse, recipe import or a
+Ghi nhanh sentence, then observe it.
 
 A worker runs the job; the app polls these routes while it is open and gets
 a push for results it has not seen. Chat turns become jobs through
@@ -7,6 +8,7 @@ a push for results it has not seen. Chat turns become jobs through
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -14,6 +16,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ValidationError
 
+from src.api.base_dependencies import get_describe_log_guard
 from src.api.dependencies.ai_jobs import get_ai_job_service
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.recipe_import import get_recipe_import_guard
@@ -32,6 +35,9 @@ from src.api.routes.v1.meals_route_helpers import (
 from src.api.schemas.request.ai_job_requests import (
     AiJobCreateRequest,
     AiJobSeenRequest,
+    DescribeHydrationJobInput,
+    DescribeLogJobInput,
+    DescribeMovementJobInput,
     MealScanJobInput,
     ParseTextJobInput,
 )
@@ -42,6 +48,8 @@ from src.api.schemas.response.ai_job_responses import (
     AiJobSeenResponse,
 )
 from src.app.services.ai_jobs import AiJobService
+from src.app.services.describe_any_items import ALL_KINDS
+from src.app.services.describe_log_guard import DescribeLogGuard
 from src.app.services.recipe_import import RecipeImportGuard
 from src.domain.exceptions.ai_job_exceptions import (
     AiJobConflictError,
@@ -52,6 +60,7 @@ from src.domain.exceptions.ai_job_exceptions import (
 from src.domain.model.ai_jobs import (
     AI_JOB_ENQUEUE_RATE_LIMIT,
     AI_JOB_MAX_IDS_PER_LOOKUP,
+    DESCRIBE_AI_JOB_TYPES,
     ENQUEUEABLE_AI_JOB_TYPES,
     AiJobListState,
     AiJobType,
@@ -105,10 +114,25 @@ async def create_ai_job(
     user_id: str = Depends(get_current_user_id),
     service: AiJobService = Depends(get_ai_job_service),
     recipe_import_guard: RecipeImportGuard = Depends(get_recipe_import_guard),
+    describe_guard: DescribeLogGuard = Depends(get_describe_log_guard),
 ) -> AiJobResponse:
     """Queue a job. Re-sending the same id and input returns the existing job."""
     job_type = _enqueueable_type(payload.type)
-    if job_type == AiJobType.MEAL_SCAN:
+    if job_type in DESCRIBE_AI_JOB_TYPES:
+        job_request = _describe_request(
+            job_type, payload.input, request.headers.get("X-Timezone")
+        )
+        with _job_errors():
+            known = await service.has_job(user_id=user_id, job_id=str(payload.id))
+        if not known:
+            # The sync route's switch, Premium, daily quota and sentence check,
+            # once per job id: resending the same job never spends quota twice.
+            await describe_guard.check(
+                user_id=user_id,
+                text=job_request["text"],
+                timezone=job_request["header_timezone"],
+            )
+    elif job_type == AiJobType.MEAL_SCAN:
         job_request = _meal_scan_request(_parse_input(MealScanJobInput, payload.input))
     elif job_type == AiJobType.RECIPE_IMPORT:
         job_request = _recipe_import_request(
@@ -300,6 +324,70 @@ def _recipe_import_request(job_input: RecipeImportSourceRequest) -> dict[str, An
         "image_url": image_url,
         "note": job_input.note,
     }
+
+
+def _describe_request(
+    job_type: AiJobType, data: dict[str, Any], timezone: str | None
+) -> dict[str, Any]:
+    """Validate like the Ghi nhanh routes; the worker trusts the result.
+
+    The job id is the sentence's replay key, so the + panel's undo
+    (``DELETE /v1/log/describe/{job_id}``) works on a job-run sentence too.
+    """
+    if job_type == AiJobType.DESCRIBE_LOG:
+        log_input = _parse_input(DescribeLogJobInput, data)
+        return {
+            "text": _describe_text(log_input.text),
+            "local_date": _iso_date(log_input.local_date, "local_date"),
+            "local_time": _hh_mm(log_input.local_time),
+            "kinds": sorted(set(log_input.kinds or ALL_KINDS)),
+            "header_timezone": timezone,
+        }
+    if job_type == AiJobType.DESCRIBE_MOVEMENT:
+        movement_input = _parse_input(DescribeMovementJobInput, data)
+        return {
+            "text": _describe_text(movement_input.text),
+            "target_date": _iso_date(movement_input.target_date, "target_date"),
+            "weight_kg": movement_input.weight_kg,
+            "header_timezone": timezone,
+        }
+    hydration_input = _parse_input(DescribeHydrationJobInput, data)
+    return {
+        "text": _describe_text(hydration_input.text),
+        "target_date": _iso_date(hydration_input.target_date, "target_date"),
+        "header_timezone": timezone,
+    }
+
+
+def _describe_text(raw: str) -> str:
+    text = sanitize_user_description(raw)
+    if not text:
+        raise ValidationException(
+            "This sentence can't be logged", "DESCRIBE_TEXT_REJECTED"
+        )
+    return text
+
+
+def _iso_date(raw: str | None, field: str) -> str | None:
+    if raw is None:
+        return None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d").date().isoformat()
+    except ValueError as exc:
+        raise ValidationException(
+            f"Invalid {field}. Use YYYY-MM-DD", "INVALID_DATE"
+        ) from exc
+
+
+def _hh_mm(raw: str | None) -> str | None:
+    if raw is None:
+        return None
+    try:
+        return datetime.strptime(raw, "%H:%M").strftime("%H:%M")
+    except ValueError as exc:
+        raise ValidationException(
+            "Invalid local_time. Use HH:MM", "INVALID_TIME"
+        ) from exc
 
 
 def _parse_job_ids(raw: str) -> list[str]:
