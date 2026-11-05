@@ -33,17 +33,38 @@ app. A user who has left the app gets a push instead.
   the job does not wait for its lease.
 - Failed and cancelled jobs stay readable, so nothing is dropped silently.
   `GET /v1/ai-jobs` lists only the last 24 hours, but `GET /v1/ai-jobs/{id}`
-  reads any of the user's jobs.
+  reads any of the user's jobs until retention deletes it
+  (`AI_JOBS_RETENTION_DAYS`, 30 days by default).
 
 ## Who runs what
 
 - Every API process accepts new jobs and answers reads.
-- Processes with `AI_JOBS_WORKER_ENABLED` also run the worker
-  (`AI_JOBS_WORKER_CONCURRENCY` lanes) and the push notifier. Unless at least
-  one process does, queued jobs never run.
-- `AI_JOBS_GLOBAL_CAPACITY` caps running meal scans and text parses across
-  all workers. Chat turns do not count against it, because chat has its own
-  concurrency limits.
+- Processes with `AI_JOBS_WORKER_ENABLED` also run the worker and the push
+  notifier. Unless at least one process does, queued jobs never run. In
+  production that is `nutree_backend`. Preprod, which shares production's
+  database, never runs a worker. See
+  [Deployment topology](system-architecture.md#deployment-topology-render).
+- The worker has two sets of lanes, each with its own cap across all
+  workers:
+  - **Short jobs** (meal scans, text parses, Ghi nhanh, recipe imports, chat
+    retries): `AI_JOBS_WORKER_CONCURRENCY` lanes per process,
+    `AI_JOBS_GLOBAL_CAPACITY` running at once. Chat turns do not count
+    against the cap, because chat has its own concurrency limits.
+  - **Long jobs** (`weekly_plan`, which runs for minutes):
+    `AI_JOBS_LONG_WORKER_CONCURRENCY` lanes per process (0 runs none in this
+    process), `AI_JOBS_LONG_GLOBAL_CAPACITY` running at once.
+
+  A burst of weekly plans therefore never makes a meal scan wait.
+- A worker claims only job types it has an executor for. A job of a type the
+  running worker does not know yet (a web service or preprod deployed ahead
+  of the worker) stays queued until a worker that knows it starts.
+- Each worker process also runs a janitor. A minute after start-up and then
+  hourly, it deletes finished jobs (completed, failed, cancelled) created
+  more than `AI_JOBS_RETENTION_DAYS` ago, at most 50,000 rows a pass, in
+  batches of 1,000.
+- A job queued in the same process wakes that process's idle lanes at once.
+  A worker in another process finds it on its next poll: short lanes poll
+  every `AI_JOBS_POLL_SECONDS`, and long lanes back off to 5 s when idle.
 - A chat turn runs in the API process that received it, because that process
   streams the reply. A worker picks up a chat job only to retry it.
 
@@ -285,11 +306,14 @@ can finish what it already queued.
 |---------|---------|-----|
 | `AI_JOBS_ENABLED` | `false` | Accept new jobs and advertise the capability |
 | `AI_JOBS_WORKER_ENABLED` | `false` | Run the worker and notifier in this process |
-| `AI_JOBS_WORKER_CONCURRENCY` | `2` | Worker lanes per process (1–16) |
-| `AI_JOBS_GLOBAL_CAPACITY` | `4` | Running meal scans and text parses across all workers (1–64) |
+| `AI_JOBS_WORKER_CONCURRENCY` | `2` | Short-job lanes per worker process (1–16) |
+| `AI_JOBS_GLOBAL_CAPACITY` | `4` | Short jobs running across all workers, chat aside (1–64) |
+| `AI_JOBS_LONG_WORKER_CONCURRENCY` | `2` | Long-job (weekly plan) lanes per worker process; 0 runs none here (0–16) |
+| `AI_JOBS_LONG_GLOBAL_CAPACITY` | `4` | Long jobs running across all workers (1–64) |
+| `AI_JOBS_RETENTION_DAYS` | `30` | Worker processes delete finished jobs created longer ago than this; queued and running jobs are kept (1–3650) |
 | `AI_JOBS_LEASE_SECONDS` | `120` | How long a silent worker keeps a job (30–3600) |
 | `AI_JOBS_EXECUTION_DEADLINE_SECONDS` | `90` | Longest single attempt (10–600) |
-| `AI_JOBS_POLL_SECONDS` | `1.0` | Worker poll when idle; a new job in the same process wakes it at once (0.1–60) |
+| `AI_JOBS_POLL_SECONDS` | `1.0` | How often idle short lanes look for work; a new job in the same process wakes them at once (0.1–60) |
 | `AI_JOBS_HEARTBEAT_SECONDS` | `2.0` | Lease renewal and cancel check (0.5–60) |
 | `AI_JOBS_NOTIFY_GRACE_SECONDS` | `8` | Wait after a job finishes before it may be pushed (0–600) |
 | `AI_JOBS_CHAT_BACKGROUND_ENABLED` | `true` | Let chat turns become jobs |
@@ -298,15 +322,19 @@ can finish what it already queued.
 
 1. Run the migration with both flags off. Token registration starts storing
    tokens at once, so devices are known before any push is due.
-2. Set `AI_JOBS_WORKER_ENABLED=true` on at least one process.
+2. Set `AI_JOBS_WORKER_ENABLED=true` on production's service. Never set it
+   on preprod, which shares the production database.
 3. Set `AI_JOBS_ENABLED=true`.
+
+If the worker later moves to its own service, deploy it before the web
+service, so it already knows any new job type the web service starts
+queuing.
 
 Turning `AI_JOBS_ENABLED` off stops new jobs and manual retries. Workers keep
 draining what is already queued until `AI_JOBS_WORKER_ENABLED` is off too.
 
 ## Not built yet
 
-- Nothing deletes old `ai_jobs` rows yet.
 - Push copy for languages other than English and Vietnamese.
 - Out of scope for this ticket: quiet hours, and job types other than chat,
   meal scan, text parse and recipe import.

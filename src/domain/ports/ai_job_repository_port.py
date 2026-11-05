@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import datetime
 from typing import Any
 
@@ -15,6 +15,7 @@ from src.domain.model.ai_jobs import (
     AiJobListState,
     AiJobNotificationClaim,
     AiJobStatus,
+    AiJobType,
     NewAiJob,
 )
 
@@ -84,9 +85,17 @@ class AiJobRepositoryPort(ABC):
 
     @abstractmethod
     async def claim_next(
-        self, *, lease_seconds: int, global_capacity: int
+        self,
+        *,
+        lease_seconds: int,
+        global_capacity: int,
+        job_types: Collection[AiJobType],
     ) -> AiJobClaim | None:
-        """Lease the next due job, or None when idle or at capacity."""
+        """Lease the next due job of ``job_types``, or None when idle or full.
+
+        ``global_capacity`` caps running jobs of ``job_types`` (chat aside)
+        across every worker, so each set of types has its own capacity.
+        """
 
     @abstractmethod
     async def heartbeat(
@@ -137,6 +146,14 @@ class AiJobRepositoryPort(ABC):
         """
 
     # --- notifier ---
+
+    @abstractmethod
+    async def delete_finished(self, *, older_than_days: int, limit: int) -> int:
+        """Delete up to ``limit`` finished jobs created over ``older_than_days`` ago.
+
+        Returns how many were deleted. Rows another transaction holds are
+        skipped, so several workers can run this at once.
+        """
 
     @abstractmethod
     async def claim_notifications(

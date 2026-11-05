@@ -7,9 +7,12 @@ import pytest
 from src.api.services import write_cache_invalidation
 from src.api.services.write_cache_invalidation import (
     apply_activity_calories_cache_invalidation,
+    apply_cheat_day_cache_invalidation,
     apply_hydration_write_cache_invalidation,
     apply_meal_write_cache_invalidation,
     apply_movement_write_cache_invalidation,
+    apply_profile_cache_invalidation,
+    apply_saved_suggestion_cache_invalidation,
 )
 from src.domain.cache.cache_invalidation_operations import SUPPORTED_LANGUAGES
 from src.domain.cache.cache_keys import CacheKeys
@@ -209,3 +212,65 @@ async def test_activity_calories_purge_failure_does_not_fail_the_switch() -> Non
     )
 
     cache.purge.assert_awaited()
+
+
+def _patterns(cache: AsyncMock) -> set[str]:
+    return {call.args[0] for call in cache.invalidate_pattern.await_args_list}
+
+
+@pytest.mark.asyncio
+async def test_profile_purge_clears_targets_totals_and_budgets() -> None:
+    """The nutreeai_async worker did this; now the API process does it."""
+    cache = _hosted_cache()
+
+    await apply_profile_cache_invalidation(cache, "user-1")
+
+    assert {
+        CacheKeys.user_tdee("user-1")[0],
+        CacheKeys.user_profile("user-1")[0],
+        CacheKeys.user_metrics("user-1")[0],
+    } <= _deleted(cache)
+    assert _patterns(cache) == {
+        "user:user-1:macros:*",
+        "user:user-1:nutrition_bulk:*",
+        "user:user-1:progress_summary:*",
+        "user:user-1:progress_recap:*",
+        CacheKeys.weekly_budget_user_pattern("user-1"),
+        "user:user-1:daily_breakdown:*",
+        "user:user-1:hydration:*",
+        "user:user-1:activities:*",
+    }
+
+
+@pytest.mark.asyncio
+async def test_cheat_day_purge_clears_that_weeks_budget() -> None:
+    cache = _hosted_cache()
+    cheat_day = date(2026, 11, 5)  # Thursday
+    week_start = date(2026, 11, 2)
+
+    await apply_cheat_day_cache_invalidation(cache, "user-1", cheat_day)
+
+    assert CacheKeys.weekly_budget("user-1", week_start)[0] in _deleted(cache)
+    assert CacheKeys.weekly_budget_pattern("user-1", week_start) in _patterns(cache)
+
+
+@pytest.mark.asyncio
+async def test_saved_suggestion_purge_clears_the_saved_list_only() -> None:
+    cache = _hosted_cache()
+
+    await apply_saved_suggestion_cache_invalidation(cache, "user-1")
+
+    assert _deleted(cache) == {CacheKeys.saved_suggestions("user-1")[0]}
+    cache.invalidate_pattern.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_background_purges_skip_without_a_cache_or_user() -> None:
+    cache = _hosted_cache()
+
+    await apply_profile_cache_invalidation(None, "user-1")
+    await apply_profile_cache_invalidation(cache, "")
+    await apply_cheat_day_cache_invalidation(cache, "", date(2026, 11, 5))
+    await apply_saved_suggestion_cache_invalidation(cache, "")
+
+    cache.purge.assert_not_awaited()

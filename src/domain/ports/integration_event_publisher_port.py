@@ -13,7 +13,7 @@ class IntegrationEventPublisherPort(Protocol):
 
 
 class IntegrationEventPublisherRequiredError(RuntimeError):
-    """Raised when a Queue-backed event path has no configured publisher."""
+    """Raised when an event path has no configured publisher."""
 
 
 def require_event_publisher(

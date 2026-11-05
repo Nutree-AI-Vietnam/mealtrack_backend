@@ -125,19 +125,18 @@ class Settings(BaseSettings):
     REDIS_MAX_CONNECTIONS: int = Field(
         default=10, description="Max Redis connections (reduced from 50)"
     )
+    REDIS_POOL_TIMEOUT: float = Field(
+        default=1.0,
+        gt=0,
+        description=(
+            "Seconds a Redis command waits for a free pooled connection before "
+            "the cache fails open"
+        ),
+    )
 
     # Cache configuration
     CACHE_ENABLED: bool = Field(default=True)
     CACHE_DEFAULT_TTL: int = Field(default=3600)  # 1 hour
-
-    # Cloudflare Queue integration is required for asynchronous side effects.
-    CLOUDFLARE_QUEUE_ACCOUNT_ID: str = Field(default="")
-    CLOUDFLARE_QUEUE_ID: str = Field(default="")
-    # Worker/Wrangler configuration uses the human-readable queue name. The
-    # backend REST publisher uses CLOUDFLARE_QUEUE_ID instead.
-    CLOUDFLARE_QUEUE_NAME: str = Field(default="")
-    CLOUDFLARE_QUEUE_API_TOKEN: str = Field(default="")
-    CLOUDFLARE_QUEUE_TIMEOUT_SECONDS: float = Field(default=3.0, gt=0)
 
     # Firebase
     FIREBASE_CREDENTIALS: str | None = Field(default=None)
@@ -337,8 +336,37 @@ class Settings(BaseSettings):
         default=True,
         description="Send allergies and health conditions in GET /v1/users/metrics.",
     )
-    AI_JOBS_WORKER_CONCURRENCY: int = Field(default=2, ge=1, le=16)
-    AI_JOBS_GLOBAL_CAPACITY: int = Field(default=4, ge=1, le=64)
+    AI_JOBS_WORKER_CONCURRENCY: int = Field(
+        default=2,
+        ge=1,
+        le=16,
+        description="Lanes per worker process for short jobs (scans, text, chat).",
+    )
+    AI_JOBS_GLOBAL_CAPACITY: int = Field(
+        default=4,
+        ge=1,
+        le=64,
+        description="Short jobs running at once across every worker process.",
+    )
+    # Weekly plans run for minutes, so they get lanes and a cap of their own.
+    AI_JOBS_LONG_WORKER_CONCURRENCY: int = Field(
+        default=2,
+        ge=0,
+        le=16,
+        description="Lanes per worker process for long jobs; 0 runs none here.",
+    )
+    AI_JOBS_LONG_GLOBAL_CAPACITY: int = Field(
+        default=4,
+        ge=1,
+        le=64,
+        description="Long jobs running at once across every worker process.",
+    )
+    AI_JOBS_RETENTION_DAYS: int = Field(
+        default=30,
+        ge=1,
+        le=3650,
+        description="Worker processes delete finished AI jobs older than this.",
+    )
     AI_JOBS_LEASE_SECONDS: int = Field(default=120, ge=30, le=3600)
     AI_JOBS_EXECUTION_DEADLINE_SECONDS: int = Field(default=90, ge=10, le=600)
     AI_JOBS_POLL_SECONDS: float = Field(default=1.0, ge=0.1, le=60)

@@ -88,6 +88,7 @@ async def initialize_cache_layer() -> None:
         _redis_client = RedisClient(
             redis_url=settings.redis_url,
             max_connections=settings.REDIS_MAX_CONNECTIONS,
+            pool_timeout=settings.REDIS_POOL_TIMEOUT,
         )
         await _redis_client.connect()
 
@@ -97,7 +98,6 @@ async def initialize_cache_layer() -> None:
         monitor=_cache_monitor,
         enabled=settings.CACHE_ENABLED,
     )
-    _register_local_insight_hook()
     _register_write_cache_invalidation_hooks()
 
 
@@ -108,15 +108,11 @@ async def shutdown_cache_layer() -> None:
     from src.app.events.hydration.local_cache_invalidation import (
         register_local_hydration_cache_invalidation_hook,
     )
-    from src.app.events.meal.meal_events import (
-        register_local_cache_invalidation_hook,
-        register_local_insight_hook,
-    )
+    from src.app.events.meal.meal_events import register_local_cache_invalidation_hook
     from src.app.events.movement.local_cache_invalidation import (
         register_local_movement_cache_invalidation_hook,
     )
 
-    register_local_insight_hook(None)
     register_local_cache_invalidation_hook(None)
     register_local_hydration_cache_invalidation_hook(None)
     register_local_movement_cache_invalidation_hook(None)
@@ -261,29 +257,11 @@ def get_cache_service() -> CacheService | None:
     return _cache_service
 
 
-def _register_local_insight_hook() -> None:
-    """Write meal insights to Docker Redis when the Worker cannot reach it (development only)."""
-    if settings.ENVIRONMENT != "development":
-        return
-    from src.api.services.local_meal_insight_cache import (
-        LocalMealInsightWriter,
-        redis_url_is_local,
-    )
-    from src.app.events.meal.meal_events import register_local_insight_hook
-
-    if not redis_url_is_local(settings.redis_url):
-        return
-
-    register_local_insight_hook(
-        LocalMealInsightWriter(get_cache_service, get_ai_model_manager).schedule
-    )
-
-
 def _register_write_cache_invalidation_hooks() -> None:
     """Purge meal, hydration and movement write keys before each write returns.
 
     Registered in every environment: reads after a write must not depend on
-    the nutreeai_async Queue worker, whose purge is only a second pass.
+    the in-process event handlers, which run after the response.
     """
     from src.api.services.write_cache_invalidation import (
         apply_hydration_write_cache_invalidation,

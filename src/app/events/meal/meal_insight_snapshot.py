@@ -1,4 +1,4 @@
-"""Bounded meal snapshot embedded on generic meal Queue events."""
+"""Bounded meal snapshot embedded on meal integration events."""
 
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ class MealInsightIngredient(BaseModel):
 
 
 class MealInsightSnapshot(BaseModel):
-    """Bounded meal snapshot consumed by the Worker business handler."""
+    """Bounded meal snapshot the insight handler generates from."""
 
     dish_name: str | None = None
     language: str = "en"
@@ -69,7 +69,7 @@ class MealInsightSnapshot(BaseModel):
         user_context: dict[str, Any] | None = None,
         tokens: list[str] | None = None,
     ) -> MealInsightSnapshot:
-        """Build the bounded Worker input from the authoritative meal."""
+        """Build the bounded insight input from the authoritative meal."""
         if meal.nutrition is None:
             raise ValueError("Meal insight events require nutrition")
 
@@ -157,9 +157,7 @@ def compact_insight_micros(micros: Micros | None) -> dict[str, float] | None:
     """Keep logged micros only, rounded for the Queue snapshot."""
     if not isinstance(micros, Micros):
         return None
-    compact = {
-        key: round(float(value), 1) for key, value in micros.to_dict().items()
-    }
+    compact = {key: round(float(value), 1) for key, value in micros.to_dict().items()}
     return compact or None
 
 
@@ -173,7 +171,7 @@ def meal_insight_occurred_at(meal: Meal) -> datetime:
 
 
 def compact_insight_user_context(result: Any) -> dict[str, Any] | None:
-    """Keep only the bounded profile fields the Worker prompt needs."""
+    """Keep only the bounded profile fields the insight prompt needs."""
     if not isinstance(result, dict):
         return None
     profile = result.get("profile") if isinstance(result.get("profile"), dict) else {}

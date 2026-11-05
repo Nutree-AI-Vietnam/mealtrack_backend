@@ -41,8 +41,9 @@ pytest tests/architecture -q
 **Write paths purge their own Redis caches**
 - Meal/hydration/movement writes await the purge in
   `src/api/services/write_cache_invalidation.py` before responding, in every
-  environment. Never rely on the nutreeai_async Queue worker for
-  read-after-write freshness.
+  environment. Never rely on the in-process integration event handlers
+  (`src/api/services/in_process_integration_events.py`), which run after the
+  response, for read-after-write freshness.
 - No SCAN on the write path: name exact keys in
   `src/domain/cache/cache_invalidation_operations.py`; a cache keyed by an
   arbitrary range checks `CacheKeys.intake_revision` instead.
