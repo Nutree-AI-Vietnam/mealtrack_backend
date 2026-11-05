@@ -74,6 +74,7 @@ SOFT_REASONS = (
     "OFF_TARGET_CALORIES",
     "SAME_PROTEIN_TODAY",
     "SAME_FLAVOUR_TODAY",
+    "SAME_BASE_THIS_WEEK",
 )
 
 
@@ -535,6 +536,38 @@ _FLAVOUR_WORDS = frozenset(
 )
 
 
+# What a breakfast is built on. The locale note already asks for a different
+# one each morning - "do not build two breakfasts in this list on the same
+# base" - and a full-week run answered with cháo yến mạch on four of seven
+# mornings anyway: khoai lang trứng, bí đỏ trứng, gà bí đỏ, trứng gà bí đỏ.
+# Four different dish keys, one breakfast. Saying it again in the prompt was
+# not going to work, so it is checked.
+#
+# Longest first: "mì" lives inside "bánh mì", and the first match wins.
+_DISH_BASES = (
+    "bánh cuốn",
+    "bánh mì",
+    "yến mạch",
+    "sữa chua",
+    "khoai lang",
+    "sinh tố",
+    "yogurt",
+    "cháo",
+    "phở",
+    "miến",
+    "bún",
+    "xôi",
+    "oat",
+    "mì",
+)
+
+
+def base_of_name(name: str) -> str:
+    """What this dish is built on, or "" when the name does not say."""
+    folded = str(name or "").casefold()
+    return next((base for base in _DISH_BASES if base in folded), "")
+
+
 def flavours_of_name(name: str) -> frozenset[str]:
     """The seasoning bases this dish name claims, or nothing when it is plain."""
     folded = str(name or "").casefold()
@@ -588,6 +621,10 @@ class DishRequest:
     note: str = ""
     # Minutes this slot is worth, when the region says less than the default.
     minutes: int | None = None
+    # Whether this meal must be built on a base the week has not used yet.
+    # The region asks it of breakfast and of nothing else: rice at lunch and
+    # again at dinner is the week working as intended.
+    vary_base: bool = False
 
     @property
     def slot(self) -> tuple[int, int]:
@@ -800,6 +837,9 @@ async def generate_week_of_dishes(
     # at noon and "Cơm áp chảo bò húng quế" at night.
     day_proteins: dict[int, set[str]] = {}
     day_dishes: dict[int, list[str]] = {}
+    # Bases already used this week, per meal type: only the meals the region
+    # asks to vary put anything in here.
+    meal_bases: dict[str, set[str]] = {}
     memory = _memory_block(memory_text)
     catalogue = _catalogue_by_meal(reference_dishes)
 
@@ -841,6 +881,7 @@ async def generate_week_of_dishes(
                 taken=taken,
                 eaten_today=tuple(day_dishes.get(request.day_index, ())),
                 proteins_today=frozenset(day_proteins.get(request.day_index, ())),
+                bases_this_week=frozenset(meal_bases.get(request.meal_type, ())),
                 rejected=rejected,
                 mint=mint,
             )
@@ -853,6 +894,10 @@ async def generate_week_of_dishes(
             protein = main_protein(snapshot)
             if protein:
                 day_proteins.setdefault(request.day_index, set()).add(protein)
+            if request.vary_base:
+                base = base_of_name(snapshot.name)
+                if base:
+                    meal_bases.setdefault(request.meal_type, set()).add(base)
 
     return WeekOfDishes(
         dishes=dishes, rejected=tuple(rejected), unfilled=tuple(unfilled)
@@ -938,16 +983,19 @@ async def _dish_for_slot(
     taken: set[str],
     eaten_today: tuple[str, ...] = (),
     proteins_today: frozenset[str] = frozenset(),
+    bases_this_week: frozenset[str] = frozenset(),
     rejected: list[RejectedDish],
     mint,
 ) -> SavedRecipeSnapshot | None:
     """The dish this slot keeps, after at most MAX_DISH_ATTEMPTS tries."""
     candidates = [name for name in names if dish_key(name) not in taken | used]
     if names and not candidates:
-        # Every name offered is already on the table this week. Asking again
-        # with no name invites the model to repeat itself a third time.
+        # Every name offered is already on the table this week. Ask the model
+        # to name its own instead of leaving the slot empty: whatever it
+        # writes is still checked against the week, so a repeat is turned
+        # away, and an unnamed try is the only thing left to try.
         rejected.append(RejectedDish(name=names[0], reasons=("ALREADY_IN_THE_WEEK",)))
-        return None
+        candidates = []
     attempt, budget, bonus = 0, MAX_DISH_ATTEMPTS, PROTEIN_RETRY_BONUS
     flavours_today = _flavours_eaten(eaten_today)
     # The best dish turned away so far, by how far it sat from the slot's
@@ -1021,8 +1069,24 @@ async def _dish_for_slot(
         hard = tuple(r for r in reasons if not r.startswith(SOFT_REASONS))
         if hard:
             rejected.append(RejectedDish(name=snapshot.name, reasons=reasons))
+            # A hard no leaves nothing to keep, so unlike a soft one it gets
+            # the spare try outright. Two names that both came back already
+            # on the table used to end the slot's budget and leave it empty,
+            # which is how day 7 lost its lunch in a full-week run.
+            budget += bonus
+            bonus = 0
             continue
-        soft = reasons or _repeats_the_day(snapshot, proteins_today, flavours_today)
+        # Every soft reason, not the first one found. ``reasons or ...`` meant
+        # a dish that was both off its target and the day's second helping of
+        # chicken was only ever logged as off target, so a week's rejected
+        # list could not be read for how often the protein rule fired.
+        soft = tuple(reasons) + _repeats_the_day(
+            snapshot, proteins_today, flavours_today
+        )
+        if request.vary_base:
+            base = base_of_name(snapshot.name)
+            if base and base in bases_this_week:
+                soft += (f"SAME_BASE_THIS_WEEK_{base.upper()}",)
         if soft:
             miss = _target_miss(snapshot, request.target_calories)
             # Ties go to the later try, which is the one a shorter budget

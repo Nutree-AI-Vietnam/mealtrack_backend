@@ -917,6 +917,97 @@ class TestTwiceTheSameProteinInOneDay:
         assert week.rejected == ()
 
     @pytest.mark.asyncio
+    async def test_four_oat_mornings_in_a_week_ask_for_another_name(self):
+        """The locale note asked and was ignored, so it is checked instead.
+
+        A full-week run answered cháo yến mạch on four of seven mornings -
+        khoai lang trứng, bí đỏ trứng, gà bí đỏ, trứng gà bí đỏ. Four dish
+        keys, one breakfast.
+        """
+        egg = {"name": "egg", "protein": 30}
+        model = _Model(
+            ["Oats one", "Oats two", "Bread"],
+            recipes={
+                "Oats one": self._of("Cháo yến mạch khoai lang trứng", egg),
+                "Oats two": self._of("Cháo yến mạch bí đỏ trứng", egg),
+                "Bread": self._of("Bánh mì trứng ốp la", egg),
+            },
+        )
+
+        week = await generate_week_of_dishes(
+            tuple(
+                DishRequest(
+                    day_index=day,
+                    slot_index=0,
+                    meal_type="breakfast",
+                    target_calories=600,
+                    vary_base=True,
+                )
+                for day in range(2)
+            ),
+            ask=model.ask,
+            new_id=lambda: "x",
+            **BUILDERS,
+        )
+
+        assert sorted(d.name for d in week.dishes.values()) == [
+            "Bánh mì trứng ốp la",
+            "Cháo yến mạch khoai lang trứng",
+        ]
+        assert any(
+            r.reasons == ("SAME_BASE_THIS_WEEK_YẾN MẠCH",) for r in week.rejected
+        ), [r.reasons for r in week.rejected]
+
+    @pytest.mark.asyncio
+    async def test_lunch_may_be_rice_every_day(self):
+        """Nothing asks lunch to vary its base, and rice twice is the point."""
+        beef = {"name": "beef sirloin", "protein": 38}
+        fish = {"name": "white fish", "protein": 32}
+        model = _Model(
+            ["Lunch one", "Lunch two"],
+            recipes={
+                "Lunch one": self._of("Bún bò Huế", beef),
+                "Lunch two": self._of("Bún cá", fish),
+            },
+        )
+
+        week = await generate_week_of_dishes(
+            _requests(2), ask=model.ask, new_id=lambda: "x", **BUILDERS
+        )
+
+        assert len(week.dishes) == 2
+        assert week.rejected == ()
+
+    @pytest.mark.asyncio
+    async def test_a_slot_whose_names_are_all_taken_still_gets_a_dish(self):
+        """Day 7 lost its lunch this way in a full-week run.
+
+        Both names came back as dishes the week already held - a hard no,
+        which keeps nothing - and the slot's two tries were spent. The spare
+        try now goes to a hard no as well, and with no name left it asks the
+        model to name its own.
+        """
+        beef = {"name": "beef sirloin", "protein": 38}
+        model = _Model(
+            ["Lunch one", "Lunch two", "Lunch three"],
+            recipes={
+                "Lunch one": self._of("Bò kho", beef),
+                # Both of day two's names cook into day one's dish.
+                "Lunch two": self._of("Bò kho", beef),
+                "Lunch three": self._of("Bò kho", beef),
+                # What it writes when asked to name its own.
+                "": self._of("Cá hấp", {"name": "white fish", "protein": 32}),
+            },
+        )
+
+        week = await generate_week_of_dishes(
+            _requests(2), ask=model.ask, new_id=lambda: "x", **BUILDERS
+        )
+
+        assert week.unfilled == ()
+        assert sorted(d.name for d in week.dishes.values()) == ["Bò kho", "Cá hấp"]
+
+    @pytest.mark.asyncio
     async def test_another_day_may_eat_the_same_protein(self):
         """Variety is a rule about one day, not about the week."""
         model = _Model(["Chicken one", "Chicken two"])
