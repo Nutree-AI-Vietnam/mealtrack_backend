@@ -134,6 +134,10 @@ def _requests(command: WriteWeeklyPlanDishesCommand) -> tuple[DishRequest, ...]:
                     fat=_share(command.daily_fat, share),
                     note=locale.slot_note(index),
                     minutes=locale.breakfast_minutes if index == 0 else None,
+                    # Only breakfast: the region's note asks each morning to
+                    # start from a different base, and asks nothing of the
+                    # kind of lunch and dinner, which are rice both times.
+                    vary_base=index == 0 and bool(locale.breakfast_note),
                 )
             )
     return tuple(requests)
