@@ -46,6 +46,7 @@ from src.app.handlers.command_handlers.supplement_command_handlers import (
 )
 from src.app.services.describe_any_items import (
     ACTIVITY,
+    DRINK,
     FOOD,
     NOT_REQUESTED,
     SUPPLEMENT,
@@ -70,6 +71,11 @@ from src.app.services.describe_log_replay import (
     lease_seconds_for,
     run_once,
 )
+from src.app.services.describe_unlisted_estimates import (
+    UNLISTED_ESTIMATE_TIMEOUT_SECONDS,
+    fill_unlisted_estimates,
+)
+from src.domain.exceptions.ai_exceptions import AIOutputValidationError
 from src.domain.model.ai.describe_any_contracts import DescribeAnyParse
 from src.domain.model.supplement import SupplementProduct
 from src.domain.model.supplement.describe_estimate import estimated_product
@@ -144,7 +150,10 @@ class DescribeAnyCommandHandler(EventHandler[DescribeAnyCommand, dict]):
             cmd.user_id,
             key,
             lease_seconds=lease_seconds_for(
-                self.ai_timeout_seconds + self.food_timeout_seconds
+                self.ai_timeout_seconds
+                + UNLISTED_ESTIMATE_TIMEOUT_SECONDS
+                # parse-text may be asked twice (see _read_food)
+                + 2 * self.food_timeout_seconds
             ),
             log=lambda reservation: self._log(cmd, reservation),
         )
@@ -204,6 +213,15 @@ class DescribeAnyCommandHandler(EventHandler[DescribeAnyCommand, dict]):
             context=shelf.block(),
             max_tokens=DESCRIBE_ANY_MAX_TOKENS,
         )
+        await fill_unlisted_estimates(
+            self.meal_generation_service,
+            activities=(parse.get("activities") or []) if ACTIVITY in cmd.kinds else [],
+            drinks=(parse.get("drinks") or []) if DRINK in cmd.kinds else [],
+            timeout_seconds=min(
+                self.ai_timeout_seconds, UNLISTED_ESTIMATE_TIMEOUT_SECONDS
+            ),
+            model_purpose="describe_log",
+        )
         read = _Read(user_tz, plan_sentence(parse, cmd.kinds, supplements_on))
         read.target_date, read.weight_kg = target_date, weight_kg
         if read.plan.supplements:
@@ -228,11 +246,21 @@ class DescribeAnyCommandHandler(EventHandler[DescribeAnyCommand, dict]):
                 read.supplements.append((item, product))
 
     async def _read_food(self, cmd: DescribeAnyCommand, plan: SentencePlan) -> Any:
-        parsed = await self.event_bus.send(
-            ParseMealTextCommand(
-                text=plan.food_text or "", language=cmd.language, user_id=cmd.user_id
-            )
+        command = ParseMealTextCommand(
+            text=plan.food_text or "", language=cmd.language, user_id=cmd.user_id
         )
+        try:
+            parsed = await self.event_bus.send(command)
+        except AIOutputValidationError:
+            # One food without a usable estimate fails the whole parse. Ask
+            # once more; if it fails again, keep the sentence's other kinds
+            # and report the food as skipped rather than lose everything.
+            try:
+                parsed = await self.event_bus.send(command)
+            except AIOutputValidationError:
+                logger.warning("[DESCRIBE-LOG-FOOD-UNREADABLE] after_retry=1")
+                plan.skip(FOOD, plan.food_text or "", NOT_RECOGNIZED)
+                return None
         if not parsed.items:
             plan.skip(FOOD, plan.food_text or "", NOT_RECOGNIZED)
             return None

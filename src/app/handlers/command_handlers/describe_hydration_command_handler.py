@@ -28,6 +28,10 @@ from src.app.services.describe_log_replay import (
     lease_seconds_for,
     run_once,
 )
+from src.app.services.describe_unlisted_estimates import (
+    UNLISTED_ESTIMATE_TIMEOUT_SECONDS,
+    fill_unlisted_estimates,
+)
 from src.app.services.hydration_entry_factory import (
     catalog_macros,
     water_macros,
@@ -80,7 +84,9 @@ class DescribeHydrationCommandHandler(EventHandler[DescribeHydrationCommand, dic
             self.uow_factory,
             cmd.user_id,
             key,
-            lease_seconds=lease_seconds_for(self.ai_timeout_seconds),
+            lease_seconds=lease_seconds_for(
+                self.ai_timeout_seconds + UNLISTED_ESTIMATE_TIMEOUT_SECONDS
+            ),
             log=lambda reservation: self._log(cmd, reservation),
         )
 
@@ -95,8 +101,21 @@ class DescribeHydrationCommandHandler(EventHandler[DescribeHydrationCommand, dic
             purpose="describe_hydration",
             timeout_seconds=self.ai_timeout_seconds,
         )
+        estimated = await fill_unlisted_estimates(
+            self.meal_generation_service,
+            activities=[],
+            drinks=parse["items"],
+            timeout_seconds=min(
+                self.ai_timeout_seconds, UNLISTED_ESTIMATE_TIMEOUT_SECONDS
+            ),
+        )
         described = normalize_drinks(parse["items"])
         if not described.drinks:
+            logger.info(
+                "[DESCRIBE-LOG-NOTHING] kind=hydration raw_items=%d dropped=%d",
+                len(parse["items"]),
+                described.dropped,
+            )
             raise BusinessLogicException(
                 "No drink was recognised in the sentence",
                 "DESCRIBE_NOTHING_RECOGNIZED",
@@ -123,9 +142,11 @@ class DescribeHydrationCommandHandler(EventHandler[DescribeHydrationCommand, dic
         )
         logger.info(
             "[DESCRIBE-LOG-COMPLETE] kind=hydration items=%d unlisted=%d "
-            "dropped=%d overflow=%d total_ms=%.0f",
+            "estimated=%d defaulted=%d dropped=%d overflow=%d total_ms=%.0f",
             len(saved),
             sum(1 for drink in described.drinks if drink.drink is None),
+            estimated,
+            described.defaulted,
             described.dropped,
             described.overflow,
             (time.monotonic() - started) * 1000,

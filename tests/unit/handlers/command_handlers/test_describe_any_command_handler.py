@@ -26,6 +26,7 @@ from src.app.handlers.command_handlers.describe_any_command_handler import (
 from src.app.handlers.command_handlers.supplement_command_handlers import SavedDose
 from src.app.schemas.meal_schemas import ParsedFoodItemDto, ParseMealTextResponseDto
 from src.app.services.describe_any_items import ALL_KINDS
+from src.domain.exceptions.ai_exceptions import AIOutputValidationError
 from src.domain.model.supplement import (
     ProductSource,
     ReviewStatus,
@@ -444,3 +445,96 @@ async def test_the_meal_is_published_under_its_own_day():
 
     meal_day = env.meals.publish_created.await_args.args[1]
     assert meal_day == date(2026, 10, 26)  # what the meal writer saved it under
+
+
+@pytest.mark.asyncio
+async def test_an_unlisted_activity_without_a_met_is_asked_about_once_more():
+    sentence = {
+        "activities": [{"catalog_id": None, "name": "leo núi", "duration_min": 60}]
+    }
+    env = _Env(sentence)
+    env.generation.generate_meal_plan_async.side_effect = [
+        copy.deepcopy(sentence),
+        {"activities": [{"ref": "a0", "met": 8.0}], "drinks": []},
+    ]
+
+    reply = await env.send()
+
+    assert [item["kind"] for item in reply["saved"]] == ["activity"]
+    [entry] = env.db.state.entries
+    assert (entry.activity_id, entry.activity_name) == (None, "leo núi")
+    second = env.generation.generate_meal_plan_async.await_args_list[1].kwargs
+    assert second["model_purpose"] == "describe_log"
+    assert second["prompt"] == "<sentence>\na0 | activity | leo núi |\n</sentence>"
+
+
+@pytest.mark.asyncio
+async def test_an_unlisted_drink_is_saved_even_when_the_second_read_fails():
+    sentence = {"drinks": [{"catalog_id": None, "name": "nước lạ"}]}
+    env = _Env(sentence)
+    env.generation.generate_meal_plan_async.side_effect = [
+        copy.deepcopy(sentence),
+        ConnectionError("model down"),
+    ]
+
+    reply = await env.send()
+
+    assert [item["kind"] for item in reply["saved"]] == ["drink"]
+    [entry] = env.db.state.entries
+    assert (entry.drink_id, entry.drink_name_snapshot) == ("other", "nước lạ")
+
+
+@pytest.mark.asyncio
+async def test_kinds_not_asked_for_are_never_estimated():
+    env = _Env(
+        {
+            "activities": [{"catalog_id": None, "name": "leo núi"}],
+            "drinks": [{"catalog_id": None, "name": "nước lạ"}],
+        }
+    )
+
+    reply = await env.send(kinds=frozenset({"food"}))
+
+    assert env.generation.generate_meal_plan_async.await_count == 1
+    assert reply["saved"] == []
+    assert {item["kind"] for item in reply["skipped"]} == {"activity", "drink"}
+
+
+@pytest.mark.asyncio
+async def test_food_is_read_once_more_when_its_estimate_is_unusable():
+    env = _Env({"food": "phở bò"})
+    read_food = env.bus.send
+    texts: list[str] = []
+
+    async def flaky(command: Any):
+        texts.append(command.text)
+        if len(texts) == 1:
+            raise AIOutputValidationError(
+                "bad portion", purpose="parse_text", attempt_count=1
+            )
+        return await read_food(command)
+
+    env.bus.send = flaky  # type: ignore[method-assign]
+
+    reply = await env.send()
+
+    assert [item["kind"] for item in reply["saved"]] == ["food"]
+    assert texts == ["phở bò", "phở bò"]
+
+
+@pytest.mark.asyncio
+async def test_food_unreadable_twice_is_skipped_and_the_rest_still_saves():
+    env = _Env({"food": "món lạ", "drinks": [{"catalog_id": "tea", "name": "trà đá"}]})
+    env.bus.send = AsyncMock(  # type: ignore[method-assign]
+        side_effect=AIOutputValidationError(
+            "bad portion", purpose="parse_text", attempt_count=1
+        )
+    )
+
+    reply = await env.send()
+
+    assert [item["kind"] for item in reply["saved"]] == ["drink"]
+    assert reply["skipped"] == [
+        {"kind": "food", "title": "món lạ", "reason": "not_recognized"}
+    ]
+    assert env.bus.send.await_count == 2

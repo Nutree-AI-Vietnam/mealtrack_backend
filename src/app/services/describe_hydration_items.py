@@ -2,10 +2,12 @@
 
 The model only reads the sentence. Listed drinks take the catalog serving and
 macros a tapped entry of the same size gets; unlisted drinks take the model's
-per-100 ml estimate after it is clamped here. Bad items are dropped, never the
-whole sentence.
+per-100 ml estimate after it is clamped here, or plain-drink values when the
+model gave none. A drink the person named is never dropped for being outside
+the catalog; only an item with no name is.
 """
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,16 +19,25 @@ from src.app.services.describe_log_parser import (
 )
 from src.domain.model.hydration import Drink
 from src.domain.model.nutrition.macros import Macros
-from src.domain.services.hydration_catalog_service import find_by_id
+from src.domain.services.hydration_catalog_service import (
+    catalog_drink_id,
+    find_by_id,
+)
 
 # Stored for drinks outside the catalog. The catalog deliberately has no
 # "other" entry, so every feed titles these rows with the person's words.
 UNLISTED_DRINK_ID = "other"
+# Label-scanned drinks have their own catalog row; Ghi nhanh never uses it.
+SCANNED_DRINK_ID = "scanned"
+# Used when neither read of the sentence gave an unlisted drink values: water
+# credit like tea or juice, and no macros the person did not say.
+UNLISTED_DEFAULT_HYDRATION_WEIGHT = 0.9
 UNLISTED_DEFAULT_ML = 250
 SERVINGS_RANGE = (0.25, 10.0)
 VOLUME_RANGE_ML = (1.0, 2000.0)
 MACRO_MAX_G_PER_100ML = 100.0
 KCAL_MAX_PER_100ML = 350.0
+_ID_SEPARATORS = re.compile(r"[\s_]+")
 
 
 @dataclass(frozen=True)
@@ -36,6 +47,7 @@ class DescribedDrink:
     hydration_weight: float
     drink: Drink | None = None  # None when the drink is not in the catalog
     per_100ml: Macros | None = None  # the clamped estimate, unlisted drinks only
+    estimate_defaulted: bool = False  # unlisted, and no values came from the model
 
     @property
     def drink_id(self) -> str:
@@ -63,6 +75,10 @@ class DescribedDrinks:
     dropped: int
     overflow: int
 
+    @property
+    def defaulted(self) -> int:
+        return sum(1 for drink in self.drinks if drink.estimate_defaulted)
+
 
 def normalize_drinks(items: list[dict[str, Any]]) -> DescribedDrinks:
     """Valid drinks in sentence order, at most eight."""
@@ -74,9 +90,35 @@ def normalize_drinks(items: list[dict[str, Any]]) -> DescribedDrinks:
     )
 
 
+def catalog_drink(item: dict[str, Any]) -> Drink | None:
+    """The catalog drink the item names, forgiving case and spacing in the id
+    ("Milk Tea") and a catalog name in any app language ("Trà sữa")."""
+    raw = str(item.get("catalog_id") or "").strip()
+    candidate = _ID_SEPARATORS.sub("-", raw.lower())
+    for drink_id in (
+        candidate,
+        catalog_drink_id(raw),
+        catalog_drink_id(item.get("name")),
+    ):
+        if drink_id and drink_id != SCANNED_DRINK_ID:
+            drink = find_by_id(drink_id)
+            if drink is not None:
+                return drink
+    return None
+
+
+def needs_estimate(item: dict[str, Any]) -> bool:
+    """An unlisted drink the person named but the model gave no water share."""
+    estimate = item.get("unlisted") or {}
+    return (
+        catalog_drink(item) is None
+        and bool(short_name(item.get("name")))
+        and finite(estimate.get("hydration_weight")) is None
+    )
+
+
 def _drink(item: dict[str, Any]) -> DescribedDrink | None:
-    catalog_id = str(item.get("catalog_id") or "").strip()
-    drink = find_by_id(catalog_id) if catalog_id != "scanned" else None
+    drink = catalog_drink(item)
     per_serving = finite(item.get("volume_ml_per_serving"))
     if per_serving is None or per_serving <= 0:
         per_serving = drink.default_ml if drink else UNLISTED_DEFAULT_ML
@@ -93,17 +135,20 @@ def _drink(item: dict[str, Any]) -> DescribedDrink | None:
         )
 
     name = short_name(item.get("name"))
-    estimate = item.get("unlisted")
-    if not name or not estimate:
+    if not name:
         return None
+    estimate = item.get("unlisted") or {}
     weight = finite(estimate.get("hydration_weight"))
-    if weight is None:
-        return None
     return DescribedDrink(
         name=name,
         volume_ml=volume_ml,
-        hydration_weight=clamp(weight, 0.0, 1.0),
+        hydration_weight=(
+            UNLISTED_DEFAULT_HYDRATION_WEIGHT
+            if weight is None
+            else clamp(weight, 0.0, 1.0)
+        ),
         per_100ml=_clamped_per_100ml(estimate),
+        estimate_defaulted=weight is None,
     )
 
 
