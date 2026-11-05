@@ -24,6 +24,9 @@ from src.app.handlers.command_handlers.log_caloric_drink_command_handler import 
 from src.app.handlers.command_handlers.log_hydration_command_handler import (
     LogHydrationCommandHandler,
 )
+from src.app.services.describe_hydration_items import (
+    UNLISTED_DEFAULT_HYDRATION_WEIGHT,
+)
 from src.domain.exceptions.ai_exceptions import (
     AIOutputValidationError,
     AIUnavailableError,
@@ -266,23 +269,84 @@ async def test_absurd_estimates_are_clamped_and_overflow_is_cut(cache_hook):
 
 
 @pytest.mark.asyncio
-async def test_bad_items_are_dropped_not_the_sentence(cache_hook):
+async def test_only_nameless_items_are_dropped_not_the_sentence(cache_hook):
     store = _Store()
-    handler, _ = _handler(
+    handler, generation = _handler(
         store,
-        {
-            "items": [
-                _item(None, "", unlisted=_estimate()),
-                _item(None, "nước lạ"),
-                _item("scanned", "đồ uống quét"),
-                _item("tea", "trà"),
-            ]
-        },
+        {"items": [_item(None, "", unlisted=_estimate()), _item("tea", "trà")]},
     )
 
     result = await handler.handle(_command())
 
     assert [entry["drink_id"] for entry in result["entries"]] == ["tea"]
+    assert generation.generate_meal_plan_async.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_unlisted_drink_without_values_is_asked_about_once_more(cache_hook):
+    store = _Store()
+    handler, generation = _handler(
+        store,
+        {"items": [_item(None, "nước sâm", ml=300)]},
+        {
+            "activities": [],
+            "drinks": [
+                {"ref": "d0", "unlisted": _estimate(carbs=8, sugar=8, weight=0.95)}
+            ],
+        },
+    )
+
+    result = await handler.handle(_command("1 ly nước sâm 300ml"))
+
+    (entry,) = store.entries
+    assert (entry.drink_id, entry.drink_name_snapshot) == ("other", "nước sâm")
+    assert entry.credited_ml == int(300 * 0.95 + 0.5)
+    assert entry.carbs_g == 24.0
+    assert len(result["entries"]) == 1
+    second = generation.generate_meal_plan_async.await_args_list[1].kwargs
+    assert second["prompt"] == "<sentence>\nd0 | drink | nước sâm |\n</sentence>"
+
+
+@pytest.mark.parametrize(
+    "second_read",
+    [
+        AIUnavailableError("model down", last_error="timeout"),
+        {"activities": [], "drinks": []},
+        {"activities": [{"ref": "d0", "met": 5.0}], "drinks": []},
+    ],
+)
+@pytest.mark.asyncio
+async def test_unlisted_drink_keeps_plain_values_when_the_second_read_fails(
+    cache_hook, second_read
+):
+    store = _Store()
+    handler, _ = _handler(
+        store,
+        {"items": [_item(None, "nước lạ"), _item("scanned", "đồ uống quét", ml=330)]},
+        second_read,
+    )
+
+    await handler.handle(_command())
+
+    odd, scanned = store.entries
+    assert (odd.drink_id, odd.drink_name_snapshot) == ("other", "nước lạ")
+    assert odd.credited_ml == int(250 * UNLISTED_DEFAULT_HYDRATION_WEIGHT + 0.5)
+    assert (odd.protein_g, odd.carbs_g, odd.fat_g) == (0.0, 0.0, 0.0)
+    assert (scanned.drink_id, scanned.volume_ml) == ("other", 330)
+
+
+@pytest.mark.asyncio
+async def test_catalog_id_slips_still_match_the_catalog(cache_hook):
+    store = _Store()
+    handler, generation = _handler(
+        store,
+        {"items": [_item("Milk Tea", "trà sữa"), _item(None, "nước dừa")]},
+    )
+
+    result = await handler.handle(_command())
+
+    assert [entry["drink_id"] for entry in result["entries"]] == ["milk-tea", "coconut"]
+    assert generation.generate_meal_plan_async.await_count == 1
 
 
 @pytest.mark.asyncio
