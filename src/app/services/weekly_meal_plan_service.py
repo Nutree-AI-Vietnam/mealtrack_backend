@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import re
@@ -88,6 +89,10 @@ _basket_ids_cache: tuple[tuple[int, int], Mapping[str, frozenset[int]]] | None =
 # no catalog id, so it is passed under this prefix: never a catalog id, so it
 # feeds no leftover lunch and adds nothing to the basket.
 _SAVED_FIXED_PREFIX = "saved:"
+# Saved recipes one plan update translates at once. The translator shares
+# one provider client and its rate limit across the process, with no gate
+# of its own, so a week of saved recipes does not fan out in one burst.
+_SAVED_RECIPE_TRANSLATION_CONCURRENCY = 4
 
 
 @dataclass(frozen=True)
@@ -124,41 +129,42 @@ class WeeklyMealPlanService:
         # Fresh ingredients a compact week aims to buy; 0 means no budget.
         self.basket_target = max(0, int(basket_target)) or None
 
-    async def _translated_saved_recipes(
-        self, command: UpdateWeeklyMealPlanCommand
-    ) -> dict[str, tuple[SavedRecipeSnapshot, SavedRecipeSnapshot]]:
-        """Requested saved recipes in another language, translated up front.
+    def _translates_saved_recipes(self, command: UpdateWeeklyMealPlanCommand) -> bool:
+        """Whether the update may copy a saved recipe into another language."""
+        return bool(
+            command.saved_slots and command.language and self.saved_recipe_translator
+        )
 
-        Read and translated before the write opens its transaction, so the
-        provider call never holds the plan's locks. Keyed by suggestion id:
-        the copy as saved, and the copy translated.
+    async def _translated_saved_recipes(
+        self, snapshots: Mapping[str, SavedRecipeSnapshot], language: str | None
+    ) -> dict[str, tuple[SavedRecipeSnapshot, SavedRecipeSnapshot]]:
+        """Saved recipes in another language, translated side by side.
+
+        Called with no transaction open, so the provider call never holds
+        the plan's locks. Keyed by suggestion id: the copy as saved, and the
+        copy translated. A recipe whose translation failed or changed
+        nothing is left out.
         """
-        requested = sorted(set((command.saved_slots or {}).values()))
-        if not requested or not command.language or not self.saved_recipe_translator:
+        if not snapshots:
             return {}
-        async with self.uow_factory() as uow:
-            rows = {
-                suggestion_id: await uow.saved_suggestions.find_by_user_and_suggestion(
-                    command.user_id, suggestion_id
+        gate = asyncio.Semaphore(_SAVED_RECIPE_TRANSLATION_CONCURRENCY)
+
+        async def translate(snapshot: SavedRecipeSnapshot) -> SavedRecipeSnapshot:
+            async with gate:
+                return await translate_saved_recipe(
+                    snapshot, language, self.saved_recipe_translator
                 )
-                for suggestion_id in requested
-            }
-        translated = {}
-        for suggestion_id, row in rows.items():
-            if row is None:
-                continue
-            try:
-                snapshot = SavedRecipeSnapshot.from_saved_suggestion(
-                    suggestion_id, row.get("suggestion_data")
-                )
-            except ValueError:
-                continue
-            copy = await translate_saved_recipe(
-                snapshot, command.language, self.saved_recipe_translator
+
+        copies = await asyncio.gather(
+            *(translate(snapshot) for snapshot in snapshots.values())
+        )
+        return {
+            suggestion_id: (snapshot, copy)
+            for (suggestion_id, snapshot), copy in zip(
+                snapshots.items(), copies, strict=True
             )
-            if copy is not snapshot:
-                translated[suggestion_id] = (snapshot, copy)
-        return translated
+            if copy is not snapshot
+        }
 
     def _plans_compact_week(self, user_id: str) -> bool:
         """Stable per-user A/B bucket for compact week generation."""
@@ -380,7 +386,28 @@ class WeeklyMealPlanService:
     @planner_timed("service")
     async def update(self, command: UpdateWeeklyMealPlanCommand) -> WeeklyMealPlan:
         fingerprint = _fingerprint(command)
-        translated = await self._translated_saved_recipes(command)
+        translated: dict[str, tuple[SavedRecipeSnapshot, SavedRecipeSnapshot]] = {}
+        if self._translates_saved_recipes(command):
+            # Read before the write opens its transaction and translated
+            # after this read closes, so the provider call never holds the
+            # plan's locks. A replay of an applied update is answered here
+            # and translates nothing. Any other claim on the key (in
+            # progress, or another request's) is left for the write's
+            # reservation to report, as before.
+            async with self.uow_factory() as uow:
+                prior = await uow.meal_write_operations.lookup(
+                    user_id=command.user_id,
+                    operation="weekly_meal_plan_update",
+                    idempotency_key=command.idempotency_key,
+                )
+                if (
+                    prior is not None
+                    and prior.state == "replay"
+                    and prior.request_fingerprint == fingerprint
+                ):
+                    return await _replayed_update(uow, command.user_id, prior)
+                saved = await _saved_recipes_to_translate(uow, command)
+            translated = await self._translated_saved_recipes(saved, command.language)
         async with self.uow_factory() as uow:
             await uow.catalog_recipes.lock_catalog_publication(shared=True)
             reservation = await uow.meal_write_operations.reserve(
@@ -391,15 +418,7 @@ class WeeklyMealPlanService:
             )
             self._check_reservation(reservation)
             if reservation.state == "replay":
-                plan = await uow.weekly_meal_plans.get_by_id(
-                    user_id=command.user_id, plan_id=reservation.target_meal_id
-                )
-                if plan is None:
-                    raise ConflictException(
-                        "Weekly plan replay is missing its plan",
-                        error_code="IDEMPOTENCY_REPLAY_INVALID",
-                    )
-                return plan
+                return await _replayed_update(uow, command.user_id, reservation)
             try:
                 current = await uow.weekly_meal_plans.get_by_id(
                     user_id=command.user_id, plan_id=command.plan_id
@@ -1045,6 +1064,42 @@ class WeeklyMealPlanService:
                 "The same weekly plan write is already in progress",
                 error_code="IDEMPOTENCY_IN_PROGRESS",
             )
+
+
+async def _replayed_update(uow, user_id: str, reservation) -> WeeklyMealPlan:
+    """The plan an already applied update wrote, as it is now."""
+    plan = await uow.weekly_meal_plans.get_by_id(
+        user_id=user_id, plan_id=reservation.target_meal_id
+    )
+    if plan is None:
+        raise ConflictException(
+            "Weekly plan replay is missing its plan",
+            error_code="IDEMPOTENCY_REPLAY_INVALID",
+        )
+    return plan
+
+
+async def _saved_recipes_to_translate(
+    uow, command: UpdateWeeklyMealPlanCommand
+) -> dict[str, SavedRecipeSnapshot]:
+    """Each distinct saved recipe the update names, as saved, by suggestion id.
+
+    A missing or unusable one is skipped here; the write reports it.
+    """
+    snapshots: dict[str, SavedRecipeSnapshot] = {}
+    for suggestion_id in sorted(set((command.saved_slots or {}).values())):
+        row = await uow.saved_suggestions.find_by_user_and_suggestion(
+            command.user_id, suggestion_id
+        )
+        if row is None:
+            continue
+        try:
+            snapshots[suggestion_id] = SavedRecipeSnapshot.from_saved_suggestion(
+                suggestion_id, row.get("suggestion_data")
+            )
+        except ValueError:
+            continue
+    return snapshots
 
 
 async def _saved_recipe_slots(
