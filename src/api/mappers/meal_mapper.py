@@ -117,6 +117,16 @@ class MealMapper:
         )
 
     @staticmethod
+    def validate_detailed_payloads(items: list[dict[str, Any]]) -> None:
+        """Check serialized items still match DetailedMealResponse.
+
+        Raises pydantic.ValidationError when an item (e.g. a cached payload
+        written by an older schema) is missing required fields.
+        """
+        for item in items:
+            DetailedMealResponse.model_validate(item)
+
+    @staticmethod
     def to_detailed_response(
         meal: Meal,
         image_url: str | None = None,

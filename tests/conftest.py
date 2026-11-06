@@ -815,6 +815,16 @@ def event_loop():
 
 
 @pytest.fixture(autouse=True)
+def reset_request_user_timezone():
+    """Keep one test's auth timezone from leaking into the next test."""
+    from src.domain.utils.request_user_timezone import clear_request_user_timezone
+
+    clear_request_user_timezone()
+    yield
+    clear_request_user_timezone()
+
+
+@pytest.fixture(autouse=True)
 def reset_ai_model_manager():
     """Reset AI singleton before and after each test to prevent model-pool pollution."""
     from src.infra.services.ai.ai_model_manager import AIModelManager
