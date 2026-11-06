@@ -28,7 +28,11 @@ class AiJobORM(Base):
     user_id = Column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
-    job_type = Column(String(16), nullable=False)
+    # describe_hydration is 18 characters and describe_movement is 17.
+    # varchar(16) rejected both inserts (Sentry PYTHON-KZ,
+    # StringDataRightTruncation). 64 matches the room already used for
+    # other job identifiers in this schema.
+    job_type = Column(String(64), nullable=False)
     status = Column(
         String(16), nullable=False, default="queued", server_default="queued"
     )
