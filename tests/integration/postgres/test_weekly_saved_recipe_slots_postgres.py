@@ -242,6 +242,17 @@ async def test_saved_recipe_slot_renders_logs_and_outlives_the_saved_recipe(
     assert (slot.recipe_id, slot.saved_suggestion_id) == (None, SAVED_ID)
     body = await _payload(await _current(user_id, plan.id))
     recipe = _payload_slot(body, DINNER)["recipe"]
+    # The slot's own copy, so the dish shows its lines and steps even when it
+    # is in no saved list; amounts cover the whole recipe (4 servings).
+    copy = recipe.pop("saved_recipe")
+    assert copy["suggestion_id"] == SAVED_ID
+    assert copy["suggestion_data"]["servings"] == 4
+    assert [
+        (line["name"], line["grams"]) for line in copy["suggestion_data"]["ingredients"]
+    ] == [("Rice noodles", 400.0), ("Chicken thigh", 600.0), ("Eggs", 200.0)]
+    assert copy["suggestion_data"]["recipe_steps"] == [
+        {"instruction": "Simmer the broth."}
+    ]
     assert recipe == {
         "id": SAVED_ID,
         "name": "Grandma's chicken pho",
