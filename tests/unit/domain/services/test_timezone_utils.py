@@ -292,3 +292,73 @@ async def test_async_resolution_ignores_a_path_like_header():
     tz = await resolve_user_timezone_async("user-123", uow, "../etc/passwd")
 
     assert tz == "UTC"
+
+
+class TestResolveUserTimezoneFromAuth:
+    """Timezone loaded with the active user replaces the extra SELECT."""
+
+    @pytest.mark.asyncio
+    async def test_bound_timezone_skips_the_database(self):
+        from src.domain.utils.request_user_timezone import bind_request_user_timezone
+
+        bind_request_user_timezone("user-123", "America/New_York")
+        uow = MagicMock()
+        uow.users.get_user_timezone = AsyncMock(return_value="UTC")
+        uow.users.find_by_id = AsyncMock()
+
+        tz = await resolve_user_timezone_async(
+            "user-123",
+            uow,
+            header_timezone="Asia/Tokyo",
+        )
+
+        assert tz == "America/New_York"
+        uow.users.get_user_timezone.assert_not_called()
+        uow.users.find_by_id.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_bound_utc_still_yields_to_a_valid_header(self):
+        from src.domain.utils.request_user_timezone import bind_request_user_timezone
+
+        bind_request_user_timezone("user-123", "UTC")
+        uow = MagicMock()
+        uow.users.get_user_timezone = AsyncMock(return_value="America/New_York")
+
+        tz = await resolve_user_timezone_async(
+            "user-123",
+            uow,
+            header_timezone="Asia/Saigon",
+        )
+
+        assert tz == "Asia/Ho_Chi_Minh"
+        uow.users.get_user_timezone.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_binding_for_another_user_still_queries(self):
+        from src.domain.utils.request_user_timezone import bind_request_user_timezone
+
+        bind_request_user_timezone("someone-else", "America/New_York")
+        uow = MagicMock()
+        uow.users.get_user_timezone = AsyncMock(return_value="Asia/Bangkok")
+
+        tz = await resolve_user_timezone_async("user-123", uow)
+
+        assert tz == "Asia/Bangkok"
+        uow.users.get_user_timezone.assert_awaited_once_with("user-123")
+
+    @pytest.mark.asyncio
+    async def test_committed_timezone_replaces_the_bound_value(self):
+        from src.domain.utils.request_user_timezone import (
+            bind_request_user_timezone,
+            publish_user_timezone_changed,
+        )
+
+        bind_request_user_timezone("user-123", "UTC")
+        publish_user_timezone_changed("user-123", "Europe/Paris")
+        uow = MagicMock()
+        uow.users.get_user_timezone = AsyncMock(return_value="UTC")
+
+        tz = await resolve_user_timezone_async("user-123", uow, "Asia/Tokyo")
+
+        assert tz == "Europe/Paris"
+        uow.users.get_user_timezone.assert_not_called()

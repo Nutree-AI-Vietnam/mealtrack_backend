@@ -19,9 +19,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.base_dependencies import get_cache_service
-from src.api.dependencies.auth_cache import get_cached_user_id, set_cached_user_id
+from src.api.dependencies.auth_cache import (
+    cached_user_timezone,
+    get_cached_user_id,
+    set_cached_user_id,
+)
 from src.bootstrap.integration_services import get_firebase_executor
 from src.domain.ports.cache_port import CachePort
+from src.domain.utils.request_user_timezone import (
+    bind_request_user_timezone,
+    clear_request_user_timezone,
+)
 from src.infra.config.settings import settings
 from src.infra.database.config_async import AsyncSessionLocal, close_async_session
 from src.planner_observability import planner_timed
@@ -246,6 +254,7 @@ async def get_current_user_id(
         injected = getattr(request.state, "user", None)
         injected_id = getattr(injected, "id", None)
         if injected_id:
+            _bind_loaded_timezone(str(injected_id), getattr(injected, "timezone", None))
             return str(injected_id)
     return await resolve_current_user_id(token, cache_service=cache_service)
 
@@ -279,6 +288,7 @@ async def resolve_current_user_id(
 
     cached_user_id = await get_cached_user_id(active_cache, firebase_uid)
     if cached_user_id:
+        _bind_loaded_timezone(cached_user_id, cached_user_timezone(firebase_uid))
         return cached_user_id
 
     if async_db is None:
@@ -289,34 +299,57 @@ async def resolve_current_user_id(
             )
         scoped_db = AsyncSessionLocal()
         try:
-            user_id = await _fetch_active_user_id(scoped_db, firebase_uid)
+            user_id, timezone = await _fetch_active_user_id(scoped_db, firebase_uid)
         finally:
             await close_async_session(scoped_db)
     else:
-        user_id = await _fetch_active_user_id(async_db, firebase_uid)
+        user_id, timezone = await _fetch_active_user_id(async_db, firebase_uid)
 
-    await set_cached_user_id(active_cache, firebase_uid, user_id, True)
+    await set_cached_user_id(
+        active_cache,
+        firebase_uid,
+        user_id,
+        True,
+        timezone=timezone,
+    )
+    _bind_loaded_timezone(user_id, timezone)
     return user_id
+
+
+def _bind_loaded_timezone(user_id: str, timezone: object) -> None:
+    """Pass a timezone from the auth row through this request.
+
+    A missing value clears any previous binding so resolution falls back to
+    the database instead of another user's snapshot.
+    """
+    if isinstance(timezone, str):
+        bind_request_user_timezone(user_id, timezone)
+        return
+    clear_request_user_timezone()
 
 
 async def _fetch_active_user_id(
     async_db: AsyncSession,
     firebase_uid: str,
-) -> str:
-    """Fetch an active user ID by Firebase UID."""
+) -> tuple[str, str | None]:
+    """Fetch an active user id and timezone by Firebase UID.
+
+    Timezone is a column on the same users row. Callers pass it through
+    instead of selecting it again by primary key.
+    """
     from src.infra.database.models.user.user import User
 
     # Look up user in database by firebase_uid (only active users)
     # CRITICAL: Block deleted/inactive users from authenticating
     result = await async_db.execute(
-        select(User).where(
+        select(User.id, User.timezone).where(
             User.firebase_uid == firebase_uid,
             User.is_active.is_(True),
         )
     )
-    user = result.scalars().first()
+    row = result.first()
 
-    if not user:
+    if row is None:
         logger.warning("Active user with Firebase UID not found in database")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -328,7 +361,8 @@ async def _fetch_active_user_id(
                 },
             },
         )
-    return str(user.id)
+    user_id, timezone = row
+    return str(user_id), timezone if isinstance(timezone, str) else None
 
 
 async def get_current_user_email(

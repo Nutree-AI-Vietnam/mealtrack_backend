@@ -7,6 +7,8 @@ from datetime import timezone as datetime_timezone
 from typing import TYPE_CHECKING, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from src.domain.utils.request_user_timezone import peek_request_user_timezone
+
 if TYPE_CHECKING:
     from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 
@@ -239,6 +241,23 @@ async def get_user_monday_async(
     return monday
 
 
+def _finish_timezone_resolution(stored: str, header_timezone: str | None) -> str:
+    """Apply DB → X-Timezone header → UTC once a stored value is known.
+
+    A non-UTC stored value wins, including an empty string. UTC still yields
+    to a valid header. The header is normalized; the stored value is not.
+    """
+    if stored != "UTC":
+        return stored
+    if (
+        header_timezone
+        and header_timezone != "UTC"
+        and is_valid_timezone(header_timezone)
+    ):
+        return normalize_timezone(header_timezone)
+    return stored
+
+
 async def resolve_user_timezone_async(
     user_id: str,
     uow,  # AsyncUnitOfWorkPort
@@ -246,10 +265,15 @@ async def resolve_user_timezone_async(
 ) -> str:
     """Async version of resolve_user_timezone for use with AsyncUnitOfWork.
 
-    Optimized to use single-column get_user_timezone() query, avoiding
-    eager joins/selectinload across user profile, weights, preferences, and targets.
+    When auth already loaded this user, that timezone is used and the
+    single-column query is skipped. Otherwise get_user_timezone() avoids
+    eager joins across profile, weights, preferences, and targets.
     """
     db_tz = "UTC"
+    bound = peek_request_user_timezone(str(user_id))
+    if isinstance(bound, str):
+        return _finish_timezone_resolution(bound, header_timezone)
+
     try:
         resolved = False
         get_tz = getattr(uow.users, "get_user_timezone", None)
@@ -285,14 +309,7 @@ async def resolve_user_timezone_async(
     except Exception:
         pass
 
-    if (
-        header_timezone
-        and header_timezone != "UTC"
-        and is_valid_timezone(header_timezone)
-    ):
-        return normalize_timezone(header_timezone)
-
-    return db_tz
+    return _finish_timezone_resolution(db_tz, header_timezone)
 
 
 def resolve_user_timezone(
