@@ -998,6 +998,11 @@ def _saved_snapshot():
             "image_url": "https://images.example/pho.jpg",
             "servings": 4,
             "recipe_import": {"total_time_minutes": 50},
+            "ingredients": [
+                {"name": "rice noodles", "display_name": "Bánh phở", "grams": 800},
+                {"name": "chicken", "amount": 2, "unit": "breasts"},
+            ],
+            "recipe_steps": [{"instruction": "Simmer the broth."}],
         },
     )
 
@@ -1094,8 +1099,43 @@ def test_plan_payload_marks_saved_and_catalog_recipes():
         "is_vegetarian": False,
         "is_pork_free": False,
         "kind": "saved",
+        # The slot's own copy, so a dish in no saved list still shows its
+        # lines and steps; amounts cover the whole recipe (4 servings).
+        "saved_recipe": {
+            "suggestion_id": _SAVED_ID,
+            "suggestion_data": {
+                "meal_name": "Chicken pho",
+                "image_url": "https://images.example/pho.jpg",
+                "prep_time_minutes": 50,
+                "servings": 4,
+                "macros": {
+                    "calories": 402,
+                    "protein": 30.0,
+                    "carbs": 50.0,
+                    "fat": 10.0,
+                    "fiber": 4.0,
+                },
+                "ingredients": [
+                    {
+                        "name": "Bánh phở",
+                        "amount": None,
+                        "unit": "",
+                        "grams": 800.0,
+                    },
+                    {
+                        "name": "chicken",
+                        "amount": 2.0,
+                        "unit": "breasts",
+                        "grams": None,
+                    },
+                ],
+                "recipe_steps": [{"instruction": "Simmer the broth."}],
+            },
+        },
     }
-    assert _slot_json(body, "slot-0-1")["recipe"]["kind"] == "catalog"
+    catalog = _slot_json(body, "slot-0-1")["recipe"]
+    assert catalog["kind"] == "catalog"
+    assert catalog["saved_recipe"] is None
     # Only catalog ids go to the catalog summary query.
     assert [query.recipe_ids for query in bus.summary_queries] == [("ga",)]
 

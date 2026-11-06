@@ -9,7 +9,7 @@ import uuid
 from datetime import date, datetime, timedelta
 from functools import wraps
 from time import monotonic
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import (
     APIRouter,
@@ -1439,7 +1439,44 @@ def _saved_recipe_summary(recipe: SavedRecipeSnapshot) -> WeeklyRecipeSummaryRes
             fiber=recipe.fiber,
         ),
         kind="saved",
+        saved_recipe=_saved_recipe_payload(recipe),
     )
+
+
+def _saved_recipe_payload(recipe: SavedRecipeSnapshot) -> dict[str, Any]:
+    """The snapshot as a saved-suggestion item, which clients already read.
+
+    Ingredient amounts cover the whole recipe, which makes ``servings``
+    servings, as they do in the saved list.
+    """
+    return {
+        "suggestion_id": recipe.suggestion_id,
+        "suggestion_data": {
+            "meal_name": recipe.name,
+            "image_url": recipe.image_url,
+            "prep_time_minutes": recipe.cook_time_minutes,
+            "servings": recipe.servings,
+            "macros": {
+                "calories": recipe.calories,
+                "protein": recipe.protein,
+                "carbs": recipe.carbs,
+                "fat": recipe.fat,
+                "fiber": recipe.fiber,
+            },
+            "ingredients": [
+                {
+                    "name": line.shown_name,
+                    "amount": line.amount,
+                    "unit": line.unit,
+                    "grams": line.grams,
+                }
+                for line in recipe.ingredients
+            ],
+            "recipe_steps": [
+                {"instruction": step.instruction} for step in recipe.steps
+            ],
+        },
+    }
 
 
 def _recipe_list_item(meal: CatalogMeal) -> RecipeListItemResponse:
