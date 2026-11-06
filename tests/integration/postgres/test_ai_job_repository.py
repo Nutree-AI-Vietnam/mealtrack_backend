@@ -153,6 +153,37 @@ async def test_create_is_idempotent_by_client_id(pg_session, async_session_facto
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "job_type", list(AiJobType), ids=lambda job_type: job_type.value
+)
+async def test_every_job_type_persists(pg_session, async_session_factory, job_type):
+    """Insert the same string AsyncAiJobRepository.create writes for job_type."""
+    user_id = await _user(pg_session)
+    job = await _enqueue(
+        async_session_factory,
+        user_id,
+        job_type=job_type,
+        request_payload={"text": "trà đá"},
+    )
+
+    row = await _row(async_session_factory, job.id)
+    width = (
+        await pg_session.execute(
+            text(
+                "SELECT character_maximum_length FROM information_schema.columns "
+                "WHERE table_name = 'ai_jobs' AND column_name = 'job_type'"
+            )
+        )
+    ).scalar_one()
+
+    assert job.job_type is job_type
+    assert row.job_type == str(job_type)
+    assert len(row.job_type) <= width
+    if job_type in {AiJobType.DESCRIBE_MOVEMENT, AiJobType.DESCRIBE_HYDRATION}:
+        assert len(row.job_type) > 16
+
+
+@pytest.mark.asyncio
 async def test_claim_complete_and_capacity(pg_session, async_session_factory):
     user_id = await _user(pg_session)
     first = await _enqueue(async_session_factory, user_id)
