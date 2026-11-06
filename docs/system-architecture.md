@@ -11,7 +11,8 @@
 ## Onboarding calculation and result boundaries
 
 The unauthenticated TDEE preview is a bounded API boundary: request bodies are
-limited to 8 KiB before parsing and protected by an IP quota. Its versioned
+limited to 8 KiB before parsing. It has no rate limit: many phones share one
+carrier IP, so an IP quota turned real users away. Its versioned
 `onboarding_preview_v2` contract is authoritative for motivation/activity
 onboarding; canonical no-training is `(0, 0)`, while `(0, 15)` is a legacy
 compatibility shape. Keto applies 5/20/75 and calories are derived from the
