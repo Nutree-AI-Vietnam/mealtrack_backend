@@ -55,7 +55,7 @@ class CatalogRecipeMicronutrientEnrichmentService:
     async def load_cached_many(
         self, meals: tuple[CatalogMeal, ...]
     ) -> tuple[CatalogMeal, ...]:
-        """load_cached for several meals: one session, one reference read."""
+        """load_cached for several meals: one session, one overlay query, one reference read."""
         if not meals:
             return ()
         async with self._uow_factory() as uow:

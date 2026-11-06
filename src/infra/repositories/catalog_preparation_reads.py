@@ -208,10 +208,16 @@ class CatalogPreparationReads:
         if not ids:
             return {}
         rows = (
-            await self.session.execute(
-                _overlay_query(contract_version).where(Micro.catalog_meal_id.in_(ids))
+            (
+                await self.session.execute(
+                    _overlay_query(contract_version).where(
+                        Micro.catalog_meal_id.in_(ids)
+                    )
+                )
             )
-        ).scalars()
+            .scalars()
+            .all()
+        )
         return {row.catalog_meal_id: _overlay_payload(row) for row in rows}
 
     async def load_input(self, claim):
