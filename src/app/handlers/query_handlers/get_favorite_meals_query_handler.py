@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from pydantic import ValidationError
+
 from src.api.mappers.meal_mapper import MealMapper
 from src.app.events.base import EventHandler, handles
 from src.app.queries.meal import GetFavoriteMealsQuery
@@ -26,7 +28,6 @@ class GetFavoriteMealsQueryHandler(EventHandler[GetFavoriteMealsQuery, dict[str,
         self.uow_factory = uow_factory
         self.cache_service = cache_service
 
-
     async def handle(self, query: GetFavoriteMealsQuery) -> dict[str, Any]:
         limit = max(1, min(query.limit, 20))
         language = query.language or "en"
@@ -41,7 +42,26 @@ class GetFavoriteMealsQueryHandler(EventHandler[GetFavoriteMealsQuery, dict[str,
                 language=language,
             )
             if cached is not None:
-                return cached
+                try:
+                    MealMapper.validate_detailed_payloads(cached.get("items", []))
+                    return cached
+                except ValidationError as exc:
+                    # Payload written by an older schema; rebuild and overwrite.
+                    # Log the count and field names only. str(exc) includes
+                    # the cached meal payload.
+                    missing_fields = sorted(
+                        {str(err["loc"][-1]) for err in exc.errors() if err.get("loc")}
+                    )
+                    logger.warning(
+                        "Discarding stale cached favorite meals for user %s "
+                        "(revision=%s, language=%s): "
+                        "%s validation errors, missing fields: %s",
+                        query.user_id,
+                        revision,
+                        language,
+                        exc.error_count(),
+                        missing_fields,
+                    )
 
         async with self.uow_factory() as uow:
             favorites = await uow.favorite_meals.list_favorite_meals(
