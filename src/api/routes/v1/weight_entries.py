@@ -1,6 +1,6 @@
 """Weight entries API endpoints."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
@@ -35,6 +35,7 @@ async def get_weight_entries(
 @router.post("")
 async def add_weight_entry(
     request: AddWeightEntryRequest,
+    http_request: Request,
     user_id: str = Depends(get_current_user_id),
     event_bus: EventBus = Depends(get_configured_event_bus),
 ):
@@ -43,6 +44,7 @@ async def add_weight_entry(
         user_id=user_id,
         weight_kg=request.weight_kg,
         recorded_at=request.recorded_at,
+        header_timezone=http_request.headers.get("X-Timezone"),
     )
     return await event_bus.send(command)
 
@@ -61,6 +63,7 @@ async def delete_weight_entry(
 @router.post("/sync")
 async def sync_weight_entries(
     request: SyncWeightEntriesRequest,
+    http_request: Request,
     user_id: str = Depends(get_current_user_id),
     event_bus: EventBus = Depends(get_configured_event_bus),
 ):
@@ -69,5 +72,9 @@ async def sync_weight_entries(
         WeightEntryData(weight_kg=e.weight_kg, recorded_at=e.recorded_at)
         for e in request.entries
     ]
-    command = SyncWeightEntriesCommand(user_id=user_id, entries=entries)
+    command = SyncWeightEntriesCommand(
+        user_id=user_id,
+        entries=entries,
+        header_timezone=http_request.headers.get("X-Timezone"),
+    )
     return await event_bus.send(command)
