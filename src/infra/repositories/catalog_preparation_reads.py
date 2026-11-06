@@ -36,6 +36,28 @@ def current_facet(projection, task):
     return projection.enrichment_digest
 
 
+def _overlay_query(contract_version):
+    """Ready micronutrient overlays whose inputs still match the live projection."""
+    return (
+        select(Micro)
+        .join(Projection, Projection.catalog_meal_id == Micro.catalog_meal_id)
+        .join(Source, Source.id == Micro.catalog_meal_id)
+        .where(
+            Micro.status == "ready",
+            Micro.input_facet_version == Projection.enrichment_digest,
+            Micro.preparation_contract_version == contract_version,
+            Projection.enrichment_dirty.is_(False),
+            Projection.nutrition_dirty.is_(False),
+            Projection.schema_version == 1,
+            Source.is_active.is_(True),
+        )
+    )
+
+
+def _overlay_payload(row):
+    return {"micros": dict(row.micros), "sources": dict(row.sources)}
+
+
 class CatalogPreparationReads:
     def __init__(self, session):
         self.session = session
@@ -171,24 +193,26 @@ class CatalogPreparationReads:
     ):
         row = (
             await self.session.execute(
-                select(Micro)
-                .join(Projection, Projection.catalog_meal_id == Micro.catalog_meal_id)
-                .join(Source, Source.id == Micro.catalog_meal_id)
-                .where(
-                    Micro.catalog_meal_id == recipe_id,
-                    Micro.status == "ready",
-                    Micro.input_facet_version == Projection.enrichment_digest,
-                    Micro.preparation_contract_version == contract_version,
-                    Projection.enrichment_dirty.is_(False),
-                    Projection.nutrition_dirty.is_(False),
-                    Projection.schema_version == 1,
-                    Source.is_active.is_(True),
+                _overlay_query(contract_version).where(
+                    Micro.catalog_meal_id == recipe_id
                 )
             )
         ).scalar_one_or_none()
-        return (
-            {"micros": dict(row.micros), "sources": dict(row.sources)} if row else None
-        )
+        return _overlay_payload(row) if row else None
+
+    async def get_overlays(
+        self, recipe_ids, *, contract_version=PREPARATION_CONTRACT_VERSION
+    ):
+        """Current overlays keyed by recipe id in one query; missing ids are absent."""
+        ids = list(dict.fromkeys(recipe_ids))
+        if not ids:
+            return {}
+        rows = (
+            await self.session.execute(
+                _overlay_query(contract_version).where(Micro.catalog_meal_id.in_(ids))
+            )
+        ).scalars()
+        return {row.catalog_meal_id: _overlay_payload(row) for row in rows}
 
     async def load_input(self, claim):
         from src.infra.repositories.catalog_recipe_repository_async import (
