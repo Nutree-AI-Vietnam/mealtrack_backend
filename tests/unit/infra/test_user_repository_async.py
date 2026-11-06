@@ -118,6 +118,47 @@ async def test_save_does_not_reload_user_after_flush() -> None:
     assert added["entity"].language_code == "vi"
 
 
+@pytest.mark.asyncio
+async def test_timezone_publish_follows_commit_and_not_rollback() -> None:
+    from unittest.mock import patch
+
+    from src.api.dependencies.auth_cache import (
+        cached_user_timezone,
+        set_cached_user_id,
+    )
+    from src.infra.repositories.user_repository_async import _schedule_timezone_publish
+
+    await set_cached_user_id(None, "fb-commit", "user-commit", True, timezone="UTC")
+    session = Mock()
+    sync = Mock()
+    sync.info = {}
+    session.sync_session = sync
+    hooks: dict[str, object] = {}
+
+    def listen(_target, name, fn, once=False):
+        hooks[name] = fn
+
+    with patch(
+        "src.infra.repositories.user_repository_async.event.listen",
+        side_effect=listen,
+    ):
+        _schedule_timezone_publish(session, "user-commit", "Europe/Paris")
+
+    assert cached_user_timezone("fb-commit") == "UTC"
+    hooks["after_rollback"](sync)
+    assert cached_user_timezone("fb-commit") == "UTC"
+
+    sync.info = {}
+    with patch(
+        "src.infra.repositories.user_repository_async.event.listen",
+        side_effect=listen,
+    ):
+        _schedule_timezone_publish(session, "user-commit", "Europe/Paris")
+    hooks["after_commit"](sync)
+
+    assert cached_user_timezone("fb-commit") == "Europe/Paris"
+
+
 def test_save_never_copies_the_avatar_columns() -> None:
     """Only update_user_avatar writes the avatar; a stale model must not."""
     from src.infra.repositories.user_repository_async import _USER_SAVE_COLUMNS

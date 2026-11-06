@@ -16,6 +16,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from src.api.middleware.rate_limit import get_client_ip
+from src.domain.utils.request_user_timezone import clear_request_user_timezone
 from src.observability import set_request_context
 from src.planner_observability import (
     planner_operation,
@@ -159,6 +160,9 @@ class RequestLoggerMiddleware:
             self._log_error(request, request_id, elapsed, e)
             raise
         finally:
+            # The auth dependency binds timezone on this task. Drop it before
+            # the task can serve another request.
+            clear_request_user_timezone()
             # ASGI completion includes body delivery and awaited background work;
             # response_start is recorded separately from preparation completion.
             record_planner_phase(

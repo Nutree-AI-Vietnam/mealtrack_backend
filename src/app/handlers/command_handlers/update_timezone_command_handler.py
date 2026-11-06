@@ -12,6 +12,7 @@ from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
     require_event_publisher,
 )
+from src.domain.utils.request_user_timezone import publish_user_timezone_changed
 from src.domain.utils.timezone_utils import is_valid_timezone, normalize_timezone
 from src.infra.database.uow_async import AsyncUnitOfWork
 
@@ -61,6 +62,9 @@ class UpdateTimezoneCommandHandler(EventHandler[UpdateTimezoneCommand, dict[str,
                 command.user_id,
                 canonical_tz,
             )
+            # The database already matches. Refresh this worker's auth snapshot
+            # so a request that loaded the previous value does not keep it.
+            publish_user_timezone_changed(str(command.user_id), canonical_tz)
             return {"success": True, "timezone": canonical_tz}
 
         # Write: only open a UoW when we actually need to write
@@ -68,6 +72,7 @@ class UpdateTimezoneCommandHandler(EventHandler[UpdateTimezoneCommand, dict[str,
             await uow.users.update_user_timezone(command.user_id, canonical_tz)
             await uow.commit()
 
+        publish_user_timezone_changed(str(command.user_id), canonical_tz)
         logger.info(f"Updated timezone for user {command.user_id}: {canonical_tz}")
 
         event = UserProfileUpdatedEvent(
