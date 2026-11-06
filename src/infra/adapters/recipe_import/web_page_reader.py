@@ -22,8 +22,8 @@ from src.infra.adapters.recipe_import.html_recipe_parser import (
 from src.infra.adapters.recipe_import.safe_fetch import SafeHttpFetcher
 
 MAX_HTML_BYTES = 3 * 1024 * 1024
-_HTML_TYPES = ("text/html", "application/xhtml+xml")
-_HTML_ACCEPT = "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5"
+HTML_TYPES = ("text/html", "application/xhtml+xml")
+HTML_ACCEPT = "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5"
 # With complete structured data the page text is only a cross-check.
 _STRUCTURED_PAGE_TEXT_CHARS = 3_000
 _FOCUS_MIN_CHARS = 400
@@ -48,8 +48,8 @@ class WebRecipePageReader:
         resource = await self._fetcher.get(
             url,
             max_bytes=MAX_HTML_BYTES,
-            accept=_HTML_ACCEPT,
-            allowed_types=_HTML_TYPES,
+            accept=HTML_ACCEPT,
+            allowed_types=HTML_TYPES,
             truncate_oversized=True,
         )
         charset = resource.charset or sniff_charset(resource.body)

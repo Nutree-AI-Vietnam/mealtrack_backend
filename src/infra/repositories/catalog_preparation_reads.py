@@ -84,7 +84,49 @@ class CatalogPreparationReads:
             .scalars()
             .all()
         )
-        return {row.catalog_meal_id: dict(row.translations) for row in rows}
+        overlays = {row.catalog_meal_id: dict(row.translations) for row in rows}
+        stale = [identity for identity in ids if identity not in overlays]
+        if stale:
+            overlays.update(
+                await self._last_translations(stale, locale, contract_version)
+            )
+        return overlays
+
+    async def _last_translations(self, recipe_ids, locale, contract_version):
+        """Each recipe's last translation, while its current one is prepared.
+
+        Editing a recipe (its nutrition, a line, a step) invalidates its
+        translation until the worker translates it again; without this, every
+        edit showed the recipe in its source language until then, name and
+        all. The overlay maps source text to its translation, so text the
+        edit changed finds no entry and shows as written: only text that is
+        still the same is translated.
+        """
+        rows = (
+            (
+                await self.session.execute(
+                    select(Translation)
+                    .join(Source, Source.id == Translation.catalog_meal_id)
+                    .where(
+                        Translation.catalog_meal_id.in_(recipe_ids),
+                        Translation.locale == locale,
+                        Translation.contract_version == contract_version,
+                        Source.is_active.is_(True),
+                    )
+                    .order_by(
+                        Translation.catalog_meal_id,
+                        Translation.updated_at.desc(),
+                        Translation.id.desc(),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        last = {}
+        for row in rows:
+            last.setdefault(row.catalog_meal_id, dict(row.translations))
+        return last
 
     async def load_ingredient_translations(
         self,

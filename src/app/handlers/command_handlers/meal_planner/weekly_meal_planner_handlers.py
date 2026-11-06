@@ -46,8 +46,10 @@ class GenerateWeeklyMealPlanCommandHandler(EventHandler):
 
 @handles(UpdateWeeklyMealPlanCommand)
 class UpdateWeeklyMealPlanCommandHandler(EventHandler):
-    def __init__(self, uow_factory: Any):
-        self.service = WeeklyMealPlanService(uow_factory)
+    def __init__(self, uow_factory: Any, *, saved_recipe_translator: Any = None):
+        self.service = WeeklyMealPlanService(
+            uow_factory, saved_recipe_translator=saved_recipe_translator
+        )
 
     async def handle(self, command):
         return await self.service.update(command)

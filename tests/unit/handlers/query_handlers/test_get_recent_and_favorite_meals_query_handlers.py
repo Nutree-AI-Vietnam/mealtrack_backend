@@ -6,6 +6,11 @@ from uuid import uuid4
 
 import pytest
 
+from src.api.mappers.meal_mapper import MealMapper
+from src.api.schemas.response.meal_responses import (
+    FavoriteMealsListResponse,
+    RecentMealsListResponse,
+)
 from src.app.handlers.query_handlers.get_favorite_meals_query_handler import (
     GetFavoriteMealsQueryHandler,
 )
@@ -44,6 +49,27 @@ def _make_meal(user_id: str, dish_name: str, quantity: float = 100.0) -> Meal:
     )
 
 
+def _valid_item(meal: Meal, is_favorite: bool = False) -> dict:
+    detailed = MealMapper.to_detailed_response(meal, target_language="en")
+    detailed.is_favorite = is_favorite
+    return detailed.model_dump(mode="json")
+
+
+def _stale_item(meal: Meal) -> dict:
+    """Simulate a payload cached before ai_generated/nutrition_source_summary existed."""
+    item = _valid_item(meal, is_favorite=True)
+    item.pop("ai_generated")
+    item.pop("nutrition_source_summary")
+    return item
+
+
+def _mock_uow():
+    uow = MagicMock()
+    uow.__aenter__ = AsyncMock(return_value=uow)
+    uow.__aexit__ = AsyncMock(return_value=False)
+    return uow
+
+
 @pytest.mark.unit
 class TestGetRecentMealsQueryHandler:
     @pytest.mark.asyncio
@@ -51,7 +77,7 @@ class TestGetRecentMealsQueryHandler:
         cache_service = MagicMock()
         cache_service.get_revision = AsyncMock(return_value=2)
         cached_payload = {
-            "items": [{"meal_id": "cached-1", "dish_name": "Cached Meal"}],
+            "items": [_valid_item(_make_meal(str(uuid4()), "Cached Meal"))],
             "total": 1,
         }
         cache_service.get_recent_meals = AsyncMock(return_value=cached_payload)
@@ -173,6 +199,41 @@ class TestGetRecentMealsQueryHandler:
         assert result["total"] == 10
         assert len(result["items"]) == 10
 
+    @pytest.mark.asyncio
+    async def test_recent_meals_stale_cache_is_rebuilt(self):
+        user_id = str(uuid4())
+        meal1 = _make_meal(user_id, "Recent Pho")
+
+        cache_service = MagicMock()
+        cache_service.get_revision = AsyncMock(return_value=2)
+        cache_service.get_recent_meals = AsyncMock(
+            return_value={"items": [_stale_item(meal1)], "total": 1}
+        )
+        cache_service.set_recent_meals = AsyncMock()
+
+        mock_uow = _mock_uow()
+        mock_uow.meals.find_recent_food_meals = AsyncMock(return_value=[meal1])
+        mock_uow.favorite_meals.filter_favorited_meal_ids = AsyncMock(
+            return_value=set()
+        )
+        handler = GetRecentMealsQueryHandler(
+            uow_factory=lambda: mock_uow, cache_service=cache_service
+        )
+        result = await handler.handle(
+            GetRecentMealsQuery(
+                user_id=user_id,
+                user_timezone="UTC",
+                limit=10,
+                language="vi",
+            )
+        )
+
+        RecentMealsListResponse(**result)
+        assert "ai_generated" in result["items"][0]
+        assert "nutrition_source_summary" in result["items"][0]
+        mock_uow.meals.find_recent_food_meals.assert_awaited_once()
+        cache_service.set_recent_meals.assert_awaited_once()
+
 
 @pytest.mark.unit
 class TestGetFavoriteMealsQueryHandler:
@@ -181,7 +242,9 @@ class TestGetFavoriteMealsQueryHandler:
         cache_service = MagicMock()
         cache_service.get_revision = AsyncMock(return_value=3)
         cached_payload = {
-            "items": [{"meal_id": "fav-1", "is_favorite": True}],
+            "items": [
+                _valid_item(_make_meal(str(uuid4()), "Fav Meal"), is_favorite=True)
+            ],
             "total": 1,
         }
         cache_service.get_favorite_meals = AsyncMock(return_value=cached_payload)
@@ -222,4 +285,34 @@ class TestGetFavoriteMealsQueryHandler:
         assert result["items"][0]["meal_id"] == meal1.meal_id
         assert result["items"][0]["is_favorite"] is True
         assert result["items"][0]["favorited_at"] == fav_dt.isoformat()
+        cache_service.set_favorite_meals.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_favorite_meals_stale_cache_is_rebuilt(self):
+        user_id = str(uuid4())
+        meal1 = _make_meal(user_id, "Favorite Pho")
+        fav_dt = datetime.now(UTC)
+
+        cache_service = MagicMock()
+        cache_service.get_revision = AsyncMock(return_value=3)
+        cache_service.get_favorite_meals = AsyncMock(
+            return_value={"items": [_stale_item(meal1)], "total": 1}
+        )
+        cache_service.set_favorite_meals = AsyncMock()
+
+        mock_uow = _mock_uow()
+        mock_uow.favorite_meals.list_favorite_meals = AsyncMock(
+            return_value=[(meal1, fav_dt)]
+        )
+        handler = GetFavoriteMealsQueryHandler(
+            uow_factory=lambda: mock_uow, cache_service=cache_service
+        )
+        result = await handler.handle(
+            GetFavoriteMealsQuery(user_id=user_id, limit=20, language="vi")
+        )
+
+        FavoriteMealsListResponse(**result)
+        assert "ai_generated" in result["items"][0]
+        assert "nutrition_source_summary" in result["items"][0]
+        mock_uow.favorite_meals.list_favorite_meals.assert_awaited_once()
         cache_service.set_favorite_meals.assert_awaited_once()

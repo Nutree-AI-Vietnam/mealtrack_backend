@@ -3,8 +3,8 @@
 import logging
 from uuid import UUID
 
+from sqlalchemy import event, select, update
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -17,6 +17,7 @@ from src.domain.model.user import UserDomainModel, UserProfileDomainModel
 from src.domain.model.user.firebase_identity import tombstone_firebase_uid
 from src.domain.model.user.user_avatar import UserAvatar
 from src.domain.ports.user_repository_port import UserRepositoryPort
+from src.domain.utils.request_user_timezone import publish_user_timezone_changed
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.user.profile import UserProfile
 from src.infra.database.models.user.profile_preference import UserProfilePreference
@@ -115,6 +116,36 @@ def _sync_profile_preference_entries(
     entity.preference_entries = next_entries
 
 
+def _schedule_timezone_publish(
+    session: AsyncSession,
+    user_id: str,
+    timezone: str,
+) -> None:
+    """Publish a timezone write after this session commits.
+
+    A rollback drops the pending value, so the auth snapshot cannot move
+    ahead of a write that did not land.
+    """
+    sync = session.sync_session
+    sync.info["mealtrack_user_timezone_write"] = (str(user_id), timezone)
+    if sync.info.get("mealtrack_user_timezone_hook"):
+        return
+    sync.info["mealtrack_user_timezone_hook"] = True
+
+    def _after_commit(sess) -> None:
+        change = sess.info.pop("mealtrack_user_timezone_write", None)
+        sess.info.pop("mealtrack_user_timezone_hook", None)
+        if change is not None:
+            publish_user_timezone_changed(change[0], change[1])
+
+    def _after_rollback(sess) -> None:
+        sess.info.pop("mealtrack_user_timezone_write", None)
+        sess.info.pop("mealtrack_user_timezone_hook", None)
+
+    event.listen(sync, "after_commit", _after_commit, once=True)
+    event.listen(sync, "after_rollback", _after_rollback, once=True)
+
+
 class AsyncUserRepository(UserRepositoryPort):
     """Async SQLAlchemy user repository. Never calls session.commit()."""
 
@@ -133,6 +164,15 @@ class AsyncUserRepository(UserRepositoryPort):
             existing_entity = None
 
         if existing_entity:
+            if (
+                isinstance(user_entity.timezone, str)
+                and existing_entity.timezone != user_entity.timezone
+            ):
+                _schedule_timezone_publish(
+                    self.session,
+                    str(existing_entity.id),
+                    user_entity.timezone,
+                )
             _copy_user_save_columns(existing_entity, user_entity)
             user_entity = existing_entity
             try:
@@ -277,6 +317,7 @@ class AsyncUserRepository(UserRepositoryPort):
         await self.session.execute(
             update(User).where(User.id == str(user_id)).values(timezone=timezone)
         )
+        _schedule_timezone_publish(self.session, str(user_id), timezone)
 
     async def get_user_timezone(self, user_id: UUID) -> str | None:
         result = await self.session.execute(

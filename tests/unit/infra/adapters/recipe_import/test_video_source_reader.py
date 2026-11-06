@@ -1,5 +1,6 @@
 """Video captions via yt-dlp, with oEmbed and page-tag fallbacks."""
 
+import json
 from typing import Any
 
 import httpx
@@ -175,6 +176,165 @@ async def test_blocked_video_falls_back_to_oembed_caption():
         material.description == "Full caption: 500g gà, 2 thìa nước mắm, chiên 10 phút"
     )
     assert (material.author, material.image_url) == ("chef", "https://p16/x.jpg")
+
+
+TIKTOK_CAPTION = "Sườn nướng cơm tấm của mẹ tui #AnCungTikTok"
+TIKTOK_PAGE = (
+    '<html><body><script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"'
+    ' type="application/json">'
+    + json.dumps(
+        {
+            "__DEFAULT_SCOPE__": {
+                "webapp.reflow.video.detail": {
+                    "statusCode": 0,
+                    "itemInfo": {
+                        "itemStruct": {
+                            "desc": TIKTOK_CAPTION,
+                            "author": {
+                                "uniqueId": "lenkycungkhoa",
+                                "nickname": "Lên Ký Cùng Khoa",
+                            },
+                            "video": {
+                                "duration": 78,
+                                "cover": "https://p19.tiktokcdn-us.com/cover.jpeg",
+                                "subtitleInfos": [
+                                    {
+                                        "LanguageCodeName": "eng-US",
+                                        "Url": "https://v16m.tiktokcdn-us.com/en/",
+                                        "Format": "webvtt",
+                                        "Source": "MT",
+                                    },
+                                    {
+                                        "LanguageCodeName": "vie-VN",
+                                        "Url": "https://v16m.tiktokcdn-us.com/vi/",
+                                        "Format": "webvtt",
+                                        "Source": "ASR",
+                                    },
+                                ],
+                            },
+                        }
+                    },
+                }
+            }
+        },
+        ensure_ascii=False,
+    )
+    + "</script></body></html>"
+).encode()
+SPEECH_VTT = (
+    "WEBVTT\n\n00:00:00.080 --> 00:00:03.200\nmẹ tui ướp cho một kí sườn\n\n"
+    "00:00:03.240 --> 00:00:05.280\nđường muối bột ngọt tiêu\n"
+).encode()
+TIKTOK_BOT_CHECK = RuntimeError(
+    "ERROR: [TikTok] 1: Unexpected response from webpage request"
+)
+
+
+def _tiktok(subtitle: httpx.Response, seen: list[str] | None = None):
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.headers["host"]
+        if seen is not None:
+            seen.append(f"{host}{request.url.path}")
+        if host == "vt.tiktok.com":
+            return httpx.Response(
+                301,
+                headers={
+                    "location": "https://www.tiktok.com/@lenkycungkhoa/video/1?_r=1&_t=ZS-9"
+                },
+            )
+        if host == "www.tiktok.com" and request.url.path.startswith("/@"):
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/html; charset=utf-8"},
+                content=TIKTOK_PAGE,
+            )
+        if host == "v16m.tiktokcdn-us.com":
+            return subtitle
+        return httpx.Response(404)
+
+    return handler
+
+
+@pytest.mark.asyncio
+async def test_a_bot_checked_tiktok_reads_the_post_its_page_embeds():
+    """yt-dlp gets TikTok's bot check, and oEmbed no longer has the caption.
+
+    The page TikTok serves the import still embeds the post, with TikTok's
+    transcript of the speech, which is where most recipes are.
+    """
+    FakeYdl.error = TIKTOK_BOT_CHECK
+    seen: list[str] = []
+    # TikTok's CDN labels its WebVTT files video/mp4.
+    subtitle = httpx.Response(
+        200, headers={"content-type": "video/mp4"}, content=SPEECH_VTT
+    )
+
+    material = await _reader(_tiktok(subtitle, seen)).read_video(
+        "https://vt.tiktok.com/ZSp2P9MW7/", TIKTOK, language="vi"
+    )
+
+    assert material.metadata_only
+    assert material.description == TIKTOK_CAPTION
+    assert material.subtitles == "mẹ tui ướp cho một kí sườn\nđường muối bột ngọt tiêu"
+    assert (material.author, material.duration_seconds) == ("Lên Ký Cùng Khoa", 78)
+    assert material.image_url == "https://p19.tiktokcdn-us.com/cover.jpeg"
+    assert material.source_url == "https://vt.tiktok.com/ZSp2P9MW7/"
+    assert material.canonical_url == "https://www.tiktok.com/@lenkycungkhoa/video/1"
+    # The transcript of the speech is read, not its machine translation, and
+    # nothing else is needed once the page has the post.
+    assert "v16m.tiktokcdn-us.com/vi/" in seen
+    assert "v16m.tiktokcdn-us.com/en/" not in seen
+    assert not any(path.endswith("/oembed") for path in seen)
+
+
+@pytest.mark.asyncio
+async def test_a_tiktok_transcript_that_is_not_webvtt_leaves_the_caption():
+    FakeYdl.error = TIKTOK_BOT_CHECK
+    not_vtt = httpx.Response(
+        200, headers={"content-type": "video/mp4"}, content=b"\x00\x00\x00\x18ftyp"
+    )
+
+    material = await _reader(_tiktok(not_vtt)).read_video(
+        "https://www.tiktok.com/@lenkycungkhoa/video/1", TIKTOK, language="vi"
+    )
+
+    assert material.description == TIKTOK_CAPTION
+    assert material.subtitles is None
+
+
+@pytest.mark.asyncio
+async def test_a_tiktok_transcript_with_a_byte_order_mark_is_still_read():
+    FakeYdl.error = TIKTOK_BOT_CHECK
+    with_bom = httpx.Response(
+        200, headers={"content-type": "text/vtt"}, content=b"\xef\xbb\xbf" + SPEECH_VTT
+    )
+
+    material = await _reader(_tiktok(with_bom)).read_video(
+        "https://www.tiktok.com/@lenkycungkhoa/video/1", TIKTOK, language="vi"
+    )
+
+    assert material.subtitles == "mẹ tui ướp cho một kí sườn\nđường muối bột ngọt tiêu"
+
+
+@pytest.mark.asyncio
+async def test_a_tiktok_page_without_the_post_falls_back_to_oembed():
+    FakeYdl.error = TIKTOK_BOT_CHECK
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oembed":
+            return httpx.Response(200, json={"title": "Caption from oEmbed"})
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            content=b"<html><body>Please wait...</body></html>",
+        )
+
+    material = await _reader(handler).read_video(
+        "https://www.tiktok.com/@a/video/1", TIKTOK, language="vi"
+    )
+
+    assert material.description == "Caption from oEmbed"
+    assert material.metadata_only
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,7 @@
 """Response contracts for weekly planning, recipes, groceries, and logging."""
 
 from datetime import date, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -28,6 +28,11 @@ class WeeklyRecipeSummaryResponse(BaseModel):
     # "catalog": a /v1/recipes recipe; "saved": one of the user's saved
     # recipes, and ``id`` is its saved-suggestion id.
     kind: Literal["catalog", "saved"] = "catalog"
+    # Saved recipes only: the slot's own copy, with its lines and steps, in
+    # the shape of a GET /v1/saved-suggestions item. A recipe the AI wrote
+    # for the week is in no saved list, so this is the only place a client
+    # can read what goes into it.
+    saved_recipe: dict[str, Any] | None = None
 
 
 class WeeklyMealSlotResponse(BaseModel):

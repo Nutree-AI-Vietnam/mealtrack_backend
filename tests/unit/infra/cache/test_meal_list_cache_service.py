@@ -47,6 +47,7 @@ class TestMealListCacheService:
         service = MealListCacheService(redis_client=redis)
 
         expected_key = service._recent_key("u-1", 3, "America/New_York", "en")
+        assert ":recent-meals:v2:3:" in expected_key
         data = await service.get_recent_meals("u-1", 3, "America/New_York", "en")
         assert data == {"items": [{"meal_id": "m1"}], "total": 1}
         redis.get.assert_awaited_once_with(expected_key)
@@ -62,6 +63,7 @@ class TestMealListCacheService:
         service = MealListCacheService(redis_client=redis)
 
         expected_key = service._favorite_key("u-1", 3, "vi")
+        assert expected_key == "user:u-1:favorite-meals:v2:3:vi"
         data = await service.get_favorite_meals("u-1", 3, "vi")
         assert data == {"items": [{"meal_id": "m2"}], "total": 1}
         redis.get.assert_awaited_once_with(expected_key)

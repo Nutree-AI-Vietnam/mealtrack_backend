@@ -17,3 +17,6 @@ class UpdateWeeklyMealPlanCommand(Command):
     # Coordinates that take one of the user's saved recipes, by
     # saved_suggestions.suggestion_id. Disjoint from ``slots``.
     saved_slots: dict[tuple[int, int], str] | None = None
+    # The reader's language: a saved recipe in another one is copied into
+    # the plan translated. Not part of the request's identity.
+    language: str | None = None

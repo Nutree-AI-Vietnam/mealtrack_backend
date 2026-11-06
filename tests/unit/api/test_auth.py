@@ -6,7 +6,7 @@ email extraction, and optional authentication.
 """
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from fastapi import HTTPException, status
@@ -205,11 +205,23 @@ class TestVerifyFirebaseToken:
 
 
 def _make_async_db(user):
-    """Return an AsyncSession mock that yields *user* from execute().scalars().first()."""
+    """Return an AsyncSession mock for the auth id+timezone lookup.
+
+    ``execute().first()`` yields ``(id, timezone)``. ``scalars().first()``
+    still yields the user object for any caller that loads the entity.
+    """
     mock_scalars = Mock()
     mock_scalars.first.return_value = user
     mock_result = Mock()
     mock_result.scalars.return_value = mock_scalars
+    if user is None:
+        mock_result.first.return_value = None
+    else:
+        timezone = getattr(user, "timezone", None)
+        mock_result.first.return_value = (
+            user.id,
+            timezone if isinstance(timezone, str) else None,
+        )
     mock_async_db = Mock()
     mock_async_db.execute = AsyncMock(return_value=mock_result)
     return mock_async_db
@@ -395,6 +407,63 @@ class TestGetCurrentUserId:
             assert result == "short_lived_user_id"
             mock_async_db.execute.assert_awaited_once()
             mock_async_db.close.assert_awaited_once()
+        finally:
+            cache_module._uid_cache.pop(firebase_uid, None)
+
+    @pytest.mark.asyncio
+    async def test_auth_lookup_passes_timezone_through_without_a_second_query(self):
+        """The users row auth already loads supplies timezone for the request."""
+        from src.api.dependencies import auth_cache as cache_module
+        from src.domain.utils.timezone_utils import resolve_user_timezone_async
+
+        mock_user = Mock()
+        mock_user.id = "user-tz-1"
+        mock_user.timezone = "Asia/Ho_Chi_Minh"
+        firebase_uid = "firebase-tz-1"
+        cache_module._uid_cache.pop(firebase_uid, None)
+        try:
+            result = await resolve_current_user_id(
+                {"uid": firebase_uid},
+                async_db=_make_async_db(mock_user),
+            )
+
+            assert result == "user-tz-1"
+            assert cache_module._uid_cache[firebase_uid]["timezone"] == (
+                "Asia/Ho_Chi_Minh"
+            )
+            uow = MagicMock()
+            uow.users.get_user_timezone = AsyncMock(return_value="UTC")
+            resolved = await resolve_user_timezone_async(
+                "user-tz-1",
+                uow,
+                "Asia/Tokyo",
+            )
+            assert resolved == "Asia/Ho_Chi_Minh"
+            uow.users.get_user_timezone.assert_not_called()
+        finally:
+            cache_module._uid_cache.pop(firebase_uid, None)
+
+    @pytest.mark.asyncio
+    async def test_cached_auth_snapshot_passes_timezone_without_a_query(self):
+        from src.api.dependencies import auth_cache as cache_module
+        from src.domain.utils.request_user_timezone import peek_request_user_timezone
+
+        firebase_uid = "firebase-tz-cached"
+        cache_module._uid_cache[firebase_uid] = {
+            "user_id": "user-tz-cached",
+            "is_active": True,
+            "timezone": "America/New_York",
+        }
+        mock_async_db = _make_async_db(None)
+        try:
+            result = await resolve_current_user_id(
+                {"uid": firebase_uid},
+                async_db=mock_async_db,
+            )
+
+            assert result == "user-tz-cached"
+            mock_async_db.execute.assert_not_awaited()
+            assert peek_request_user_timezone("user-tz-cached") == "America/New_York"
         finally:
             cache_module._uid_cache.pop(firebase_uid, None)
 
