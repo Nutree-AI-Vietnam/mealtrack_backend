@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 from datetime import date, timedelta
@@ -1367,6 +1368,253 @@ async def test_a_saved_recipe_changed_after_its_translation_goes_in_as_it_now_is
     )
 
     assert uow.update_args["saved_slots"][(1, 2)].name == "Beef pho"
+
+
+class _OverlapTranslator:
+    """Prefixes every text; records how many calls overlap and any open UoW."""
+
+    def __init__(self, uow=None, *, fails_on=()):
+        self.uow = uow
+        self.fails_on = set(fails_on)
+        self.calls = 0
+        self.in_flight = 0
+        self.max_in_flight = 0
+        self.saw_open_uow = False
+
+    async def translate_texts(self, texts, *, source_language, target_language):
+        from src.domain.model.translation_result import (
+            TranslationOutcome,
+            TranslationResult,
+        )
+
+        self.calls += 1
+        if self.uow is not None and self.uow.is_open:
+            self.saw_open_uow = True
+        self.in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        try:
+            # Yield long enough for every call that runs alongside to start.
+            await asyncio.sleep(0.01)
+            if self.fails_on.intersection(texts):
+                raise RuntimeError("provider unavailable")
+            return TranslationResult(
+                tuple(f"vi {text}" for text in texts),
+                TranslationOutcome.TRANSLATED,
+                source_language,
+                target_language,
+            )
+        finally:
+            self.in_flight -= 1
+
+
+_WEEK_OF_SAVED = {
+    (day, slot): f"recipe_import_imp-{day}-{slot}"
+    for day in (1, 2)
+    for slot in range(WEEKLY_SLOTS_PER_DAY)
+}
+
+
+def _english_saved_records(names_by_id):
+    return {
+        ("user-1", suggestion_id): {
+            "suggestion_data": _saved_data(language="en", meal_name=name)
+        }
+        for suggestion_id, name in names_by_id.items()
+    }
+
+
+@pytest.mark.asyncio
+async def test_saved_recipes_translate_side_by_side_up_to_the_bound():
+    names = {
+        suggestion_id: f"Dish {index}"
+        for index, suggestion_id in enumerate(_WEEK_OF_SAVED.values())
+    }
+    uow = _SavedUow(
+        _plan(), (_meal("chicken", "Chicken"),), _english_saved_records(names)
+    )
+    translator = _OverlapTranslator(uow)
+
+    await WeeklyMealPlanService(lambda: uow, saved_recipe_translator=translator).update(
+        UpdateWeeklyMealPlanCommand(
+            user_id="user-1",
+            plan_id="plan-1",
+            idempotency_key="saved-many",
+            slots={},
+            saved_slots=dict(_WEEK_OF_SAVED),
+            language="vi",
+        )
+    )
+
+    bound = weekly_meal_plan_service._SAVED_RECIPE_TRANSLATION_CONCURRENCY
+    assert len(names) > bound
+    assert translator.calls == len(names)
+    # Side by side, never more than the bound at once.
+    assert translator.max_in_flight == bound
+    # No provider call while a transaction is open.
+    assert translator.saw_open_uow is False
+    saved = uow.update_args["saved_slots"]
+    assert {coordinate: saved[coordinate].name for coordinate in _WEEK_OF_SAVED} == {
+        coordinate: f"vi {names[suggestion_id]}"
+        for coordinate, suggestion_id in _WEEK_OF_SAVED.items()
+    }
+    assert {copy.language for copy in saved.values()} == {"vi"}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_or_unchanged_translation_leaves_the_recipe_out():
+    from src.domain.model.weekly_meal_planner import SavedRecipeSnapshot
+
+    snapshots = {
+        "translated": SavedRecipeSnapshot.from_saved_suggestion(
+            "translated", _saved_data(language="en", meal_name="Chicken pho")
+        ),
+        "failed": SavedRecipeSnapshot.from_saved_suggestion(
+            "failed", _saved_data(language="en", meal_name="Beef pho")
+        ),
+        "same-language": SavedRecipeSnapshot.from_saved_suggestion(
+            "same-language", _saved_data(language="vi", meal_name="Bún chả")
+        ),
+    }
+    translator = _OverlapTranslator(fails_on={"Beef pho"})
+
+    translated = await WeeklyMealPlanService(
+        lambda: None, saved_recipe_translator=translator
+    )._translated_saved_recipes(snapshots, "vi")
+
+    assert set(translated) == {"translated"}
+    original, copy = translated["translated"]
+    assert original is snapshots["translated"]
+    assert copy.name == "vi Chicken pho"
+    # The recipe already in Vietnamese never reaches the provider.
+    assert translator.calls == 2
+
+
+class _IdempotentSavedUow(_SavedUow):
+    """Answers the pre-write lookup and the write's reservation separately."""
+
+    def __init__(self, plan, *, prior, reservation):
+        super().__init__(
+            plan,
+            (_meal("chicken", "Chicken"),),
+            records=_english_saved_records({_SAVED_ID: "Chicken pho"}),
+        )
+        self.prior = prior
+        self.reservation = reservation
+        self.lookup_args = None
+        self.reserved = False
+
+    async def lookup(self, **kwargs):
+        self.lookup_args = kwargs
+        return self.prior
+
+    async def reserve(self, **_):
+        self.reserved = True
+        return self.reservation
+
+
+def _saved_vi_update(key="saved-replay"):
+    return UpdateWeeklyMealPlanCommand(
+        user_id="user-1",
+        plan_id="plan-1",
+        idempotency_key=key,
+        slots={},
+        saved_slots={(1, 2): _SAVED_ID},
+        language="vi",
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_replayed_saved_recipe_update_translates_nothing():
+    command = _saved_vi_update()
+    plan = _plan()
+    uow = _IdempotentSavedUow(
+        plan,
+        prior=_Reservation("replay", fingerprint=_fingerprint(command)),
+        reservation=None,
+    )
+    translator = _OverlapTranslator(uow)
+
+    result = await WeeklyMealPlanService(
+        lambda: uow, saved_recipe_translator=translator
+    ).update(command)
+
+    assert result is plan
+    assert uow.lookup_args == {
+        "user_id": "user-1",
+        "operation": "weekly_meal_plan_update",
+        "idempotency_key": "saved-replay",
+    }
+    assert translator.calls == 0
+    assert uow.saved_suggestions.lookups == []
+    assert uow.reserved is False
+    assert uow.update_args is None
+
+
+@pytest.mark.asyncio
+async def test_a_replay_whose_plan_is_gone_is_still_invalid_before_translating():
+    command = _saved_vi_update()
+    uow = _IdempotentSavedUow(
+        None,
+        prior=_Reservation("replay", fingerprint=_fingerprint(command)),
+        reservation=None,
+    )
+    translator = _OverlapTranslator(uow)
+
+    with pytest.raises(ConflictException) as exc:
+        await WeeklyMealPlanService(
+            lambda: uow, saved_recipe_translator=translator
+        ).update(command)
+
+    assert exc.value.error_code == "IDEMPOTENCY_REPLAY_INVALID"
+    assert translator.calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("prior_state", "prior_fingerprint", "reserved_state", "error_code"),
+    [
+        # The key belongs to another request: the write reports it.
+        ("replay", "another-request", "fingerprint_conflict", "IDEMPOTENCY_KEY_REUSED"),
+        # The same request is still being written: the write reports it.
+        ("in_progress", None, "in_progress", "IDEMPOTENCY_IN_PROGRESS"),
+    ],
+)
+async def test_only_a_matching_replay_skips_the_write_reservation(
+    prior_state, prior_fingerprint, reserved_state, error_code
+):
+    command = _saved_vi_update()
+    uow = _IdempotentSavedUow(
+        _plan(),
+        prior=_Reservation(
+            prior_state, fingerprint=prior_fingerprint or _fingerprint(command)
+        ),
+        reservation=_Reservation(reserved_state),
+    )
+
+    with pytest.raises(ConflictException) as exc:
+        await WeeklyMealPlanService(
+            lambda: uow, saved_recipe_translator=_OverlapTranslator(uow)
+        ).update(command)
+
+    assert uow.reserved is True
+    assert exc.value.error_code == error_code
+    assert uow.update_args is None
+
+
+@pytest.mark.asyncio
+async def test_an_update_applied_meanwhile_replays_from_the_write_reservation():
+    plan = _plan()
+    uow = _IdempotentSavedUow(
+        plan, prior=None, reservation=_Reservation("replay", target_meal_id="plan-1")
+    )
+
+    result = await WeeklyMealPlanService(
+        lambda: uow, saved_recipe_translator=_OverlapTranslator(uow)
+    ).update(_saved_vi_update())
+
+    assert result is plan
+    assert uow.reserved is True
+    assert uow.update_args is None
 
 
 def test_the_readers_language_is_not_part_of_the_request_fingerprint():
