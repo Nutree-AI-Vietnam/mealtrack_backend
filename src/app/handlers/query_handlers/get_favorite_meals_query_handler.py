@@ -47,13 +47,20 @@ class GetFavoriteMealsQueryHandler(EventHandler[GetFavoriteMealsQuery, dict[str,
                     return cached
                 except ValidationError as exc:
                     # Payload written by an older schema; rebuild and overwrite.
+                    # Log the count and field names only. str(exc) includes
+                    # the cached meal payload.
+                    missing_fields = sorted(
+                        {str(err["loc"][-1]) for err in exc.errors() if err.get("loc")}
+                    )
                     logger.warning(
                         "Discarding stale cached favorite meals for user %s "
-                        "(revision=%s, language=%s): %s",
+                        "(revision=%s, language=%s): "
+                        "%s validation errors, missing fields: %s",
                         query.user_id,
                         revision,
                         language,
-                        exc,
+                        exc.error_count(),
+                        missing_fields,
                     )
 
         async with self.uow_factory() as uow:

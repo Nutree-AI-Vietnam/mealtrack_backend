@@ -53,14 +53,21 @@ class GetRecentMealsQueryHandler(EventHandler[GetRecentMealsQuery, dict[str, Any
                     return cached
                 except ValidationError as exc:
                     # Payload written by an older schema; rebuild and overwrite.
+                    # Log the count and field names only. str(exc) includes
+                    # the cached meal payload.
+                    missing_fields = sorted(
+                        {str(err["loc"][-1]) for err in exc.errors() if err.get("loc")}
+                    )
                     logger.warning(
                         "Discarding stale cached recent meals for user %s "
-                        "(revision=%s, timezone=%s, language=%s): %s",
+                        "(revision=%s, timezone=%s, language=%s): "
+                        "%s validation errors, missing fields: %s",
                         query.user_id,
                         revision,
                         tz_str,
                         language,
-                        exc,
+                        exc.error_count(),
+                        missing_fields,
                     )
 
         # Resolve the last 7 local calendar days (today plus the preceding 6)

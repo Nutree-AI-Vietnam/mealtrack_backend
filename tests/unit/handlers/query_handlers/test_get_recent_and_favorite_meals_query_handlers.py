@@ -7,7 +7,10 @@ from uuid import uuid4
 import pytest
 
 from src.api.mappers.meal_mapper import MealMapper
-from src.api.schemas.response.meal_responses import FavoriteMealsListResponse
+from src.api.schemas.response.meal_responses import (
+    FavoriteMealsListResponse,
+    RecentMealsListResponse,
+)
 from src.app.handlers.query_handlers.get_favorite_meals_query_handler import (
     GetFavoriteMealsQueryHandler,
 )
@@ -195,6 +198,41 @@ class TestGetRecentMealsQueryHandler:
 
         assert result["total"] == 10
         assert len(result["items"]) == 10
+
+    @pytest.mark.asyncio
+    async def test_recent_meals_stale_cache_is_rebuilt(self):
+        user_id = str(uuid4())
+        meal1 = _make_meal(user_id, "Recent Pho")
+
+        cache_service = MagicMock()
+        cache_service.get_revision = AsyncMock(return_value=2)
+        cache_service.get_recent_meals = AsyncMock(
+            return_value={"items": [_stale_item(meal1)], "total": 1}
+        )
+        cache_service.set_recent_meals = AsyncMock()
+
+        mock_uow = _mock_uow()
+        mock_uow.meals.find_recent_food_meals = AsyncMock(return_value=[meal1])
+        mock_uow.favorite_meals.filter_favorited_meal_ids = AsyncMock(
+            return_value=set()
+        )
+        handler = GetRecentMealsQueryHandler(
+            uow_factory=lambda: mock_uow, cache_service=cache_service
+        )
+        result = await handler.handle(
+            GetRecentMealsQuery(
+                user_id=user_id,
+                user_timezone="UTC",
+                limit=10,
+                language="vi",
+            )
+        )
+
+        RecentMealsListResponse(**result)
+        assert "ai_generated" in result["items"][0]
+        assert "nutrition_source_summary" in result["items"][0]
+        mock_uow.meals.find_recent_food_meals.assert_awaited_once()
+        cache_service.set_recent_meals.assert_awaited_once()
 
 
 @pytest.mark.unit
