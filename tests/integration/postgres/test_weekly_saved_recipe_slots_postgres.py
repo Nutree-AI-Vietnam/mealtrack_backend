@@ -280,7 +280,11 @@ async def test_saved_recipe_slot_renders_logs_and_outlives_the_saved_recipe(
     ).handle(DeleteSavedSuggestionCommand(user_id=user_id, suggestion_id=SAVED_ID))
     assert deleted == {"success": True}
     after_delete = await _current(user_id, plan.id)
-    assert _payload_slot(await _payload(after_delete), DINNER)["recipe"] == recipe
+    # its lines and steps included
+    assert _payload_slot(await _payload(after_delete), DINNER)["recipe"] == {
+        **recipe,
+        "saved_recipe": copy,
+    }
 
     logged = await _log(user_id, after_delete, slot, SAVED_ID, key="log-saved")
     replayed = await _log(user_id, after_delete, slot, SAVED_ID, key="log-saved")
