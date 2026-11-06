@@ -75,62 +75,26 @@ def preview_client(monkeypatch):
     reset_limiter_counters()
 
 
-def test_preview_route_accepts_real_request_and_uses_ip_quota(preview_client):
+def test_preview_route_accepts_real_request(preview_client):
+    response = preview_client.post("/v1/tdee/preview", json=preview_payload())
+
+    assert response.status_code == 200
+    assert response.json()["calculation_contract"] == "onboarding_preview_v2"
+
+
+def test_preview_is_never_rate_limited(preview_client):
+    # Many phones share one carrier IP, so one IP sends far more than 10 a minute.
     payload = preview_payload()
-    bearer = "Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1c2VyLTEifQ."
+    shared_ip = {"X-Forwarded-For": "93.184.216.1"}
 
-    first = preview_client.post("/v1/tdee/preview", json=payload)
-    assert first.status_code == 200
-    assert first.json()["calculation_contract"] == "onboarding_preview_v2"
-
-    for _ in range(9):
-        assert (
-            preview_client.post(
-                "/v1/tdee/preview", json=payload, headers={"Authorization": bearer}
-            ).status_code
-            == 200
-        )
-
-    exhausted = preview_client.post("/v1/tdee/preview", json=payload)
-    assert exhausted.status_code == 429
-    assert exhausted.json() == {
-        "error": "rate_limit_exceeded",
-        "code": "preview_rate_limited",
+    statuses = {
+        preview_client.post(
+            "/v1/tdee/preview", json=payload, headers=shared_ip
+        ).status_code
+        for _ in range(50)
     }
-    assert exhausted.headers["Retry-After"]
 
-
-def test_preview_quota_is_per_client_behind_the_proxy(preview_client):
-    payload = preview_payload()
-    first = {"X-Forwarded-For": "93.184.216.1"}
-    second = {"X-Forwarded-For": "93.184.216.2"}
-
-    for _ in range(10):
-        assert (
-            preview_client.post(
-                "/v1/tdee/preview", json=payload, headers=first
-            ).status_code
-            == 200
-        )
-    assert (
-        preview_client.post("/v1/tdee/preview", json=payload, headers=first).status_code
-        == 429
-    )
-    # Same proxy peer, different client: its own quota.
-    assert (
-        preview_client.post(
-            "/v1/tdee/preview", json=payload, headers=second
-        ).status_code
-        == 200
-    )
-    # Prepending a fake address does not buy a fresh quota.
-    spoofed = {"X-Forwarded-For": "45.33.32.7, 93.184.216.1"}
-    assert (
-        preview_client.post(
-            "/v1/tdee/preview", json=payload, headers=spoofed
-        ).status_code
-        == 429
-    )
+    assert statuses == {200}
 
 
 def test_preview_route_returns_stable_413_for_oversized_body(preview_client):

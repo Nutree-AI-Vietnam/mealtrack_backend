@@ -26,7 +26,7 @@ Preconditions:
 
 ## Gotchas
 
-- The route is limited to 10 requests per minute per IP. Two calls are the journey. A 429 means the limit was hit, which fails the run.
+- The route is not rate limited. A 429 is a regression and fails the run.
 - Height for `metric` must be 100–272 cm and weight 30–250 kg. The body above is inside that range.
 - Do not assert a hardcoded calorie number. Assert the two responses match and the fields are present.
 - This does not prove `POST /v1/user-profiles/metrics`, which persists a profile.

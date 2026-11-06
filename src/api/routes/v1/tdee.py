@@ -2,10 +2,9 @@
 TDEE calculation API endpoints - Preview and calculation without authentication.
 """
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 
 from src.api.dependencies.event_bus import get_configured_event_bus
-from src.api.middleware.rate_limit import get_ip_only_rate_limit_key, limiter
 from src.api.schemas.request import TdeeCalculationRequest
 from src.api.schemas.response import (
     TDEE_PREVIEW_CALCULATION_CONTRACT,
@@ -19,10 +18,10 @@ from src.infra.event_bus import EventBus
 router = APIRouter(prefix="/v1/tdee", tags=["TDEE"])
 
 
+# Not rate limited: the key would be the client IP, and carrier NAT puts many
+# phones behind one IP. The route only computes; the body limit caps its input.
 @router.post("/preview", response_model=TdeeCalculationResponse)
-@limiter.limit("10/minute", key_func=get_ip_only_rate_limit_key)
 async def preview_tdee(
-    request: Request,
     payload: TdeeCalculationRequest,
     event_bus: EventBus = Depends(get_configured_event_bus),
 ):
@@ -32,7 +31,7 @@ async def preview_tdee(
     Used by mobile onboarding to show consistent macro targets
     before user creates account. No data is persisted.
 
-    No authentication required.
+    No authentication required. Not rate limited.
     """
     query = PreviewTdeeQuery(
         age=payload.age,

@@ -84,7 +84,7 @@ print(TestClient(app).get('/openapi.json').json().keys())
 | Tag grouping (as declared on routers) | Recommendation idempotency / backend-owned outcome timestamps |
 | Bearer security scheme presence | Barcode cascade order, estimate-vs-catalog rules |
 | Declared status codes when annotated | Food-search degrade order (cache → local → provider) |
-| | TDEE preview body size / IP quota / `onboarding_preview_v2` policy |
+| | TDEE preview body size / no rate limit / `onboarding_preview_v2` policy |
 | | Web-funnel fail-closed and hash-only redemption rules |
 | | Meal scan must not create hydration entries (`system-architecture.md`) |
 
@@ -642,7 +642,8 @@ handler/schema when implementing; the bullets below are the durable WHY.
 ### Onboarding TDEE preview
 
 - Unauthenticated `POST /v1/tdee/preview` uses `onboarding_preview_v2`. Bodies
-  over 8 KiB are rejected before JSON parse; IP quota applies. Canonical
+  over 8 KiB are rejected before JSON parse. It is not rate limited: many
+  phones share one carrier IP, and an IP quota sent them `429`. Canonical
   no-training is `(0, 0)`; `(0, 15)` is legacy compatibility only. Keto is
   5/20/75 with calories derived from the returned macro triple. Details live in
   `system-architecture.md` and the preview handler.
