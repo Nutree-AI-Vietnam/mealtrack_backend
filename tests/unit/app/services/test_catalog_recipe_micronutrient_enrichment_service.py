@@ -45,6 +45,12 @@ class _CatalogRepository:
     async def get_overlay(self, catalog_meal_id):
         return self.overlay
 
+    async def get_overlays(self, catalog_meal_ids):
+        self.overlay_batch_reads = getattr(self, "overlay_batch_reads", 0) + 1
+        if self.overlay is None:
+            return {}
+        return dict.fromkeys(catalog_meal_ids, self.overlay)
+
 
 class _FoodReferenceRepository:
     def __init__(self, references, catalog_repository):
@@ -214,4 +220,5 @@ async def test_batch_overlay_matches_single_detail_with_one_reference_read():
     assert batch[0].nutrition_micros_sources["vitamin_c"] == "usda_fdc"
     assert batch[1].id == "catalog-2" and batch[1].nutrition_micros_enrichment_loaded
     assert _CountingReferences.reads == 2  # one for the batch, one for the single
+    assert catalog.overlay_batch_reads == 1  # one overlay query for the whole batch
     assert await service.load_cached_many(()) == ()

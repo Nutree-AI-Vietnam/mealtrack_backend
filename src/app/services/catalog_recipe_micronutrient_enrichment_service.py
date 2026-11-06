@@ -59,9 +59,10 @@ class CatalogRecipeMicronutrientEnrichmentService:
         if not meals:
             return ()
         async with self._uow_factory() as uow:
-            overlays = [
-                await uow.catalog_preparation.get_overlay(meal.id) for meal in meals
-            ]
+            overlays_by_id = await uow.catalog_preparation.get_overlays(
+                [meal.id for meal in meals]
+            )
+        overlays = [overlays_by_id.get(meal.id) for meal in meals]
         references_by_id = await self._references(
             [_reference_ids(meal) for meal in meals if _micro_values(meal)]
         )
