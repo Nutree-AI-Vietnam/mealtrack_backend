@@ -27,6 +27,7 @@ from src.app.commands.meal_planner import (
     UpdateWeeklyMealPlanCommand,
 )
 from src.app.services.planner_presentation_copy import planner_copy
+from src.app.services.saved_recipe_localizer import translate_saved_recipe
 from src.app.services.weekly_grocery_service import WeeklyGroceryService
 from src.domain.exceptions.weekly_meal_planner_exceptions import (
     WeeklyMealPlanConflictError,
@@ -110,8 +111,11 @@ class WeeklyMealPlanService:
         ai_adjustment_provider=None,
         compact_week_percent: int = 0,
         basket_target: int = 0,
+        saved_recipe_translator=None,
     ):
         self.uow_factory = uow_factory
+        # Copies a saved recipe into the plan in the reader's language.
+        self.saved_recipe_translator = saved_recipe_translator
         self.generator = generator or WeeklyPlanGenerationService()
         self.ai_adjustment_provider = ai_adjustment_provider
         self.grocery_service = WeeklyGroceryService()
@@ -119,6 +123,42 @@ class WeeklyMealPlanService:
         self.compact_week_percent = max(0, min(100, int(compact_week_percent)))
         # Fresh ingredients a compact week aims to buy; 0 means no budget.
         self.basket_target = max(0, int(basket_target)) or None
+
+    async def _translated_saved_recipes(
+        self, command: UpdateWeeklyMealPlanCommand
+    ) -> dict[str, tuple[SavedRecipeSnapshot, SavedRecipeSnapshot]]:
+        """Requested saved recipes in another language, translated up front.
+
+        Read and translated before the write opens its transaction, so the
+        provider call never holds the plan's locks. Keyed by suggestion id:
+        the copy as saved, and the copy translated.
+        """
+        requested = sorted(set((command.saved_slots or {}).values()))
+        if not requested or not command.language or not self.saved_recipe_translator:
+            return {}
+        async with self.uow_factory() as uow:
+            rows = {
+                suggestion_id: await uow.saved_suggestions.find_by_user_and_suggestion(
+                    command.user_id, suggestion_id
+                )
+                for suggestion_id in requested
+            }
+        translated = {}
+        for suggestion_id, row in rows.items():
+            if row is None:
+                continue
+            try:
+                snapshot = SavedRecipeSnapshot.from_saved_suggestion(
+                    suggestion_id, row.get("suggestion_data")
+                )
+            except ValueError:
+                continue
+            copy = await translate_saved_recipe(
+                snapshot, command.language, self.saved_recipe_translator
+            )
+            if copy is not snapshot:
+                translated[suggestion_id] = (snapshot, copy)
+        return translated
 
     def _plans_compact_week(self, user_id: str) -> bool:
         """Stable per-user A/B bucket for compact week generation."""
@@ -340,6 +380,7 @@ class WeeklyMealPlanService:
     @planner_timed("service")
     async def update(self, command: UpdateWeeklyMealPlanCommand) -> WeeklyMealPlan:
         fingerprint = _fingerprint(command)
+        translated = await self._translated_saved_recipes(command)
         async with self.uow_factory() as uow:
             await uow.catalog_recipes.lock_catalog_publication(shared=True)
             reservation = await uow.meal_write_operations.reserve(
@@ -375,7 +416,7 @@ class WeeklyMealPlanService:
                 hard_preferences_changed = _hard_preferences_changed(
                     current.preferences, preferences
                 )
-                saved_slots = await _saved_recipe_slots(uow, command)
+                saved_slots = await _saved_recipe_slots(uow, command, translated)
                 expected_revision = (
                     command.expected_revision
                     if command.expected_revision is not None
@@ -1007,11 +1048,16 @@ class WeeklyMealPlanService:
 
 
 async def _saved_recipe_slots(
-    uow, command: UpdateWeeklyMealPlanCommand
+    uow,
+    command: UpdateWeeklyMealPlanCommand,
+    translated: Mapping[str, tuple[SavedRecipeSnapshot, SavedRecipeSnapshot]]
+    | None = None,
 ) -> dict[tuple[int, int], SavedRecipeSnapshot]:
     """Copy each requested saved recipe of the caller for its slot.
 
-    Another user's saved suggestion is reported like a missing one.
+    Another user's saved suggestion is reported like a missing one. A copy
+    translated before the write is used only while the saved recipe is still
+    the one that was translated.
     """
     requested = command.saved_slots or {}
     if not requested:
@@ -1038,7 +1084,7 @@ async def _saved_recipe_slots(
                 "Saved recipe not found", error_code="SAVED_RECIPE_NOT_FOUND"
             )
         try:
-            snapshots[suggestion_id] = SavedRecipeSnapshot.from_saved_suggestion(
+            snapshot = SavedRecipeSnapshot.from_saved_suggestion(
                 suggestion_id, saved.get("suggestion_data")
             )
         except ValueError as exc:
@@ -1046,6 +1092,10 @@ async def _saved_recipe_slots(
                 "This saved recipe has no name or nutrition to plan with",
                 error_code="SAVED_RECIPE_UNUSABLE",
             ) from exc
+        pair = (translated or {}).get(suggestion_id)
+        snapshots[suggestion_id] = (
+            pair[1] if pair is not None and pair[0] == snapshot else snapshot
+        )
     return {
         coordinate: snapshots[suggestion_id]
         for coordinate, suggestion_id in requested.items()
@@ -1096,7 +1146,8 @@ def _fingerprint_fields(command) -> dict:
     return {
         key: value
         for key, value in vars(command).items()
-        if key != "idempotency_key" and not (key == "saved_slots" and not value)
+        if key not in {"idempotency_key", "language"}
+        and not (key == "saved_slots" and not value)
     }
 
 

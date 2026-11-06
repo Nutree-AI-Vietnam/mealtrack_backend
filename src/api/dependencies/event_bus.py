@@ -941,9 +941,15 @@ def get_configured_event_bus() -> EventBus:
             basket_target=settings.MEAL_PLAN_BASKET_TARGET,
         ),
     )
+    from src.api.base_dependencies import get_text_translation_service
+
     event_bus.register_handler(
         UpdateWeeklyMealPlanCommand,
-        UpdateWeeklyMealPlanCommandHandler(AsyncUnitOfWork),
+        UpdateWeeklyMealPlanCommandHandler(
+            AsyncUnitOfWork,
+            # A saved recipe goes into the week in the reader's language.
+            saved_recipe_translator=get_text_translation_service(),
+        ),
     )
     # The week a model writes: one command opens the plan, the other fills
     # it from the background job.
