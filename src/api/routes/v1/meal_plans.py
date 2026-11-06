@@ -555,6 +555,7 @@ async def update_weekly_plan(
                 slots=slots,
                 expected_revision=body.expected_revision,
                 saved_slots=saved_slots or None,
+                language=get_request_language(request),
             )
         )
         return await _plan_response(

@@ -1290,6 +1290,100 @@ async def test_patch_puts_a_copy_of_the_callers_saved_recipe_in_the_slot():
     assert uow.saved_suggestions.lookups == [("user-1", _SAVED_ID)]
 
 
+class _ViTranslator:
+    def __init__(self):
+        self.calls = 0
+
+    async def translate_texts(self, texts, *, source_language, target_language):
+        from src.domain.model.translation_result import (
+            TranslationOutcome,
+            TranslationResult,
+        )
+
+        self.calls += 1
+        vi = {"Chicken pho": "Phở gà", "Chicken": "Thịt gà"}
+        return TranslationResult(
+            tuple(vi.get(text, text) for text in texts),
+            TranslationOutcome.TRANSLATED,
+            source_language,
+            target_language,
+        )
+
+
+@pytest.mark.asyncio
+async def test_an_english_saved_recipe_goes_into_a_vietnamese_week_in_vietnamese():
+    uow = _SavedUow(
+        _plan(),
+        (_meal("chicken", "Chicken"),),
+        records={
+            ("user-1", _SAVED_ID): {"suggestion_data": _saved_data(language="en")}
+        },
+    )
+    translator = _ViTranslator()
+
+    await WeeklyMealPlanService(lambda: uow, saved_recipe_translator=translator).update(
+        UpdateWeeklyMealPlanCommand(
+            user_id="user-1",
+            plan_id="plan-1",
+            idempotency_key="saved-vi",
+            slots={},
+            saved_slots={(1, 2): _SAVED_ID},
+            language="vi",
+        )
+    )
+
+    copy = uow.update_args["saved_slots"][(1, 2)]
+    assert copy.name == "Phở gà"
+    assert copy.english_name == "Chicken pho"
+    assert [line.shown_name for line in copy.ingredients] == ["Thịt gà"]
+    assert copy.language == "vi"
+    assert translator.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_a_saved_recipe_changed_after_its_translation_goes_in_as_it_now_is():
+    records = {("user-1", _SAVED_ID): {"suggestion_data": _saved_data(language="en")}}
+    uow = _SavedUow(_plan(), (_meal("chicken", "Chicken"),), records=records)
+
+    class _EditsMeanwhile(_ViTranslator):
+        async def translate_texts(self, texts, **kwargs):
+            # The person edits the saved recipe while it is being translated.
+            records[("user-1", _SAVED_ID)] = {
+                "suggestion_data": _saved_data(language="en", meal_name="Beef pho")
+            }
+            return await super().translate_texts(texts, **kwargs)
+
+    await WeeklyMealPlanService(
+        lambda: uow, saved_recipe_translator=_EditsMeanwhile()
+    ).update(
+        UpdateWeeklyMealPlanCommand(
+            user_id="user-1",
+            plan_id="plan-1",
+            idempotency_key="saved-edited",
+            slots={},
+            saved_slots={(1, 2): _SAVED_ID},
+            language="vi",
+        )
+    )
+
+    assert uow.update_args["saved_slots"][(1, 2)].name == "Beef pho"
+
+
+def test_the_readers_language_is_not_part_of_the_request_fingerprint():
+    from src.app.services.weekly_meal_plan_service import _fingerprint
+
+    command = UpdateWeeklyMealPlanCommand(
+        user_id="user-1",
+        plan_id="plan-1",
+        idempotency_key="k",
+        saved_slots={(1, 2): _SAVED_ID},
+    )
+
+    assert _fingerprint(
+        UpdateWeeklyMealPlanCommand(**{**vars(command), "language": "vi"})
+    ) == _fingerprint(command)
+
+
 @pytest.mark.asyncio
 async def test_saved_recipe_is_exempt_from_plan_diet_rules():
     # Vegetarian plan, chicken saved recipe, and a preference change that
@@ -1410,7 +1504,7 @@ def test_requests_without_saved_recipes_keep_their_fingerprint():
         {
             key: _fingerprint_value(value)
             for key, value in vars(command).items()
-            if key not in {"idempotency_key", "saved_slots"}
+            if key not in {"idempotency_key", "saved_slots", "language"}
         }
     )
 
