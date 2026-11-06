@@ -198,3 +198,53 @@ async def test_intentional_usda_update_publishes_matching_resulting_facet(
             is not None
         )
         assert (await job_state(session, claimed.id)).status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_an_edited_recipe_keeps_its_last_translation_until_the_next(
+    pg_session, async_session_factory
+):
+    """Editing a recipe must not show it in its source language meanwhile.
+
+    The overlay is keyed by source text, so what the edit left alone (here
+    the name) stays translated and what it changed shows as written.
+    """
+    ids, _ = await seed_preparation(pg_session, task="translation")
+    async with async_session_factory() as session:
+        name = (
+            await session.execute(select(Source.name).where(Source.id == ids[0]))
+        ).scalar_one()
+    claimed = await claim(async_session_factory)
+    async with async_session_factory() as writer:
+        assert await AsyncCatalogPreparationRepository(writer).complete(
+            claimed,
+            PreparationResult(
+                PreparationOutcome.READY, {"translations": {name: "Tên đã dịch"}}
+            ),
+        )
+        await writer.commit()
+
+    async with async_session_factory() as writer:
+        await writer.execute(
+            update(Source)
+            .where(Source.id == ids[0])
+            .values(description="An edited description")
+        )
+        await writer.commit()
+
+    async with async_session_factory() as reader:
+        projection = (
+            await reader.execute(
+                select(Projection).where(Projection.catalog_meal_id == ids[0])
+            )
+        ).scalar_one()
+        assert projection.translation_dirty, "the edit invalidates the translation"
+        assert await AsyncCatalogPreparationRepository(reader).load_translations(
+            ids, locale="vi"
+        ) == {ids[0]: {name: "Tên đã dịch"}}
+        assert (
+            await AsyncCatalogPreparationRepository(reader).load_translations(
+                ids, locale="fr"
+            )
+            == {}
+        )
