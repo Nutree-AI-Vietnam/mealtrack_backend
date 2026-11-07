@@ -217,6 +217,11 @@ class OpenAIProvider(AIProviderPort):
             prompt_cache_kwargs["timeout"] = min(
                 25.0, kwargs.get("request_timeout_seconds", 25.0)
             )
+        elif kwargs.get("request_timeout_seconds"):
+            # A caller that asks for much more than one answer's worth of
+            # output (a meal type's recipes in one call) needs longer than
+            # the shared client's timeout, which is sized for a single scan.
+            prompt_cache_kwargs["timeout"] = float(kwargs["request_timeout_seconds"])
         if schema is not None:
             result = await adapter.generate_structured(
                 model=model,

@@ -61,7 +61,7 @@ async def attempt_recipe_generation(
         prompt: Recipe-specific prompt text
         meal_name: Name of the meal being generated
         index: Slot index (0-3) for logging
-        model_purpose: Model pool key ("recipe_primary" / "recipe_secondary")
+        model_purpose: ModelPurpose value for routing (callers pass "recipe")
         recipe_system: System prompt with JSON schema instructions
         session: Current suggestion session (used for fallback values)
         is_retry: Whether this is a retry attempt on an alternate model

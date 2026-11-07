@@ -11,3 +11,5 @@ class AddWeightEntryCommand:
     user_id: str
     weight_kg: float
     recorded_at: datetime
+    # Read a recorded_at without an offset in this zone when the user has none.
+    header_timezone: str | None = None

@@ -50,7 +50,10 @@ SOURCE_PLANNER_AI = "planner_ai"
 MIN_DISH_KCAL = 80.0
 MAX_DISH_KCAL = 1_600.0
 MIN_DISH_INGREDIENTS = 2
-MIN_DISH_STEPS = 1
+# The prompt asks for 2-6 steps. Of 877 dishes the planner kept in one day
+# on production, 618 were a single step - "Luộc sườn heo cho đến khi chín kỹ"
+# was the whole of a grilled-rib rice plate - which is a name, not a recipe.
+MIN_DISH_STEPS = 2
 # How far a dish may land from what its own slot asked for. The absolute
 # bounds above say "this is food"; they say nothing about whether it is
 # this meal. A real week priced 1,580 kcal into a slot asking for 675 and
@@ -132,8 +135,10 @@ def review_ai_dish(
         reasons.append("ALREADY_IN_THE_WEEK")
     if len(snapshot.ingredients) < MIN_DISH_INGREDIENTS:
         reasons.append("TOO_FEW_INGREDIENTS")
-    if len(snapshot.steps) < MIN_DISH_STEPS:
+    if not snapshot.steps:
         reasons.append("NO_STEPS")
+    elif len(snapshot.steps) < MIN_DISH_STEPS:
+        reasons.append("TOO_FEW_STEPS")
 
     kcal = float(snapshot.calories)
     if not MIN_DISH_KCAL <= kcal <= MAX_DISH_KCAL:
@@ -386,8 +391,9 @@ def pricing_lines(snapshot: SavedRecipeSnapshot) -> list[dict]:
 # Asking for a week of dishes
 # ---------------------------------------------------------------------------
 
-# Names come back in one call per meal type, so a week is three cheap calls
-# plus one per slot for the recipe itself.
+# Names come back in one call per meal type, and so do the recipes when the
+# caller can ask for several at once: a week is six calls, plus one for each
+# slot whose recipe was missing or turned away.
 # The discovery prompt describes the meals but never asks for JSON: the
 # system prompt is what does that, and without it the model answers in
 # markdown prose and every name is lost. The suggestion path has always
@@ -396,6 +402,18 @@ DISH_NAME_SYSTEM = SystemPrompts.DISCOVERY_SYSTEM
 DISH_RECIPE_SYSTEM = (
     "You are a professional chef. Generate complete recipe details as valid JSON."
 )
+# One call writes every recipe of a meal type. Seven slots asked one at a
+# time cost seven calls per meal type and twenty-one or more a week, which
+# was most of the planner's model traffic. Each recipe in the answer still
+# goes through every check a single one does; only a slot whose recipe is
+# missing or turned away pays for a call of its own.
+DISH_BATCH_SYSTEM = (
+    "You are a professional chef. Generate complete recipe details for every"
+    " dish asked for, as one valid JSON object."
+)
+# A recipe is ~600 output tokens at worst, so seven fit with room to spare.
+# Past this the answer would risk being cut off mid-JSON and lost whole.
+MAX_BATCH_RECIPES = 8
 # A rejected dish gets one replacement; a model that writes an unsafe recipe
 # twice for the same slot is not going to write a safe one on the third try.
 MAX_DISH_ATTEMPTS = 2
@@ -639,6 +657,22 @@ class WeekOfDishes:
     rejected: tuple[RejectedDish, ...] = ()
     unfilled: tuple[tuple[int, int], ...] = ()
 
+    def rejection_counts(self) -> dict[str, int]:
+        """How often each reason turned a dish away, most frequent first.
+
+        A reason that carries a measurement - OFF_TARGET_CALORIES_134PCT,
+        SAME_PROTEIN_TODAY_CHICKEN - is counted under its kind, so a week's
+        counts can be added up across weeks.
+        """
+        counts: dict[str, int] = {}
+        for dish in self.rejected:
+            for reason in dish.reasons:
+                kind = next(
+                    (soft for soft in SOFT_REASONS if reason.startswith(soft)), reason
+                )
+                counts[kind] = counts.get(kind, 0) + 1
+        return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
+
 
 def reference_block(names: tuple[str, ...]) -> str:
     """The catalogue as what this kitchen knows, which is what it is.
@@ -805,6 +839,7 @@ async def generate_week_of_dishes(
     language: str | None = None,
     new_id=None,
     on_dish: Callable[[SavedRecipeSnapshot], object] | None = None,
+    ask_many=None,
 ) -> WeekOfDishes:
     """Fill every slot with a dish the model wrote, each one checked.
 
@@ -819,6 +854,11 @@ async def generate_week_of_dishes(
     work for that dish (its photo) can run while the next one is written
     instead of after the whole week. It must not block, and nothing it
     raises reaches the week.
+
+    ``ask_many`` runs one prompt that writes several recipes at once. Given
+    it, each meal type's recipes come back in one call and only a slot whose
+    recipe is missing or turned away asks ``ask`` for its own; without it,
+    every slot asks for its own recipe.
     """
     mint = new_id or (lambda: uuid.uuid4().hex)
     dishes: dict[tuple[int, int], SavedRecipeSnapshot] = {}
@@ -874,12 +914,32 @@ async def generate_week_of_dishes(
             protein = protein_of_name(name)
             if protein:
                 planned[slot.day_index] = protein
+        written: dict[int, dict] = {}
+        if ask_many is not None:
+            batch = await _batch_recipes(
+                slots,
+                names,
+                ask_many=ask_many,
+                build_recipe_prompt=build_recipe_prompt,
+                cuisine_region=cuisine_region,
+                language=language,
+                day_dishes=day_dishes,
+                taken=taken | used,
+            )
+            if batch is None:
+                # The call itself failed - timed out, most likely. The next
+                # meal type's batch is the same size and would fail the same
+                # way, so the rest of the week asks one slot at a time.
+                ask_many = None
+            else:
+                written = batch
         for index, request in enumerate(slots):
             snapshot = await _dish_for_slot(
                 request,
                 ask=ask,
                 build_recipe_prompt=build_recipe_prompt,
-                names=names[index:],
+                prewritten=written.get(index),
+                names=_names_for_slot(names, index, len(slots), batched=bool(written)),
                 used=used,
                 price=price,
                 cuisine_region=cuisine_region,
@@ -986,6 +1046,119 @@ def _names_of(answer) -> list[str]:
     return names
 
 
+async def _batch_recipes(
+    slots: list[DishRequest],
+    names: list[str],
+    *,
+    ask_many,
+    build_recipe_prompt,
+    cuisine_region,
+    language,
+    day_dishes: Mapping[int, list[str]],
+    taken: set[str],
+) -> dict[int, dict] | None:
+    """Every slot's recipe for this meal type from one call, by slot index.
+
+    A slot is left out when it has no name of its own or its name is already
+    on the table, and the batch is empty when the answer reads as nothing:
+    either way the slot asks for its own recipe, as it always did. None means
+    the call itself failed, so the caller stops batching. Nothing here
+    decides whether a recipe is kept.
+    """
+    wanted = [
+        (index, slot, names[index])
+        for index, slot in enumerate(slots[:MAX_BATCH_RECIPES])
+        if index < len(names) and dish_key(names[index]) not in taken
+    ]
+    if not wanted:
+        return {}
+    sections = []
+    for number, (_, slot, name) in enumerate(wanted, start=1):
+        prompt = build_recipe_prompt(
+            meal_name=name,
+            meal_type=slot.meal_type,
+            target_calories=int(slot.target_calories),
+            cooking_time_minutes=slot.minutes,
+            cuisine_region=cuisine_region,
+            protein_target=slot.protein,
+            carbs_target=slot.carbs,
+            fat_target=slot.fat,
+        )
+        sections.append(
+            f"\n=== DISH {number} ===\n"
+            + prompt
+            + _slot_note_block(slot.note)
+            + _day_so_far_block(tuple(day_dishes.get(slot.day_index, ())))
+        )
+    count = len(wanted)
+    header = (
+        f"Write {count} separate recipes, one for each DISH section below."
+        " Each dish is for a different day and has its own name, calorie"
+        " target and rules; follow each section as if it were asked alone."
+        "\nAnswer with ONE JSON object and nothing else:"
+        ' {"recipes": [ ... ]}'
+        f"\n- exactly {count} entries, in the order of the sections"
+        '\n- each entry has "dish": its section number, "name": the dish'
+        " name exactly as given, and every field that section's OUTPUT JSON"
+        " asks for"
+        "\n- every rule below applies to every dish"
+    )
+    try:
+        answer = await ask_many(
+            header + "".join(sections) + KITCHEN_RULES + language_block(language),
+            DISH_BATCH_SYSTEM,
+        )
+    except Exception:  # noqa: BLE001 - every slot can still ask on its own
+        return None
+    by_number = _recipes_of(answer, count)
+    return {
+        index: by_number[number]
+        for number, (index, _, _) in enumerate(wanted, start=1)
+        if number in by_number
+    }
+
+
+def _names_for_slot(
+    names: list[str], index: int, slot_count: int, *, batched: bool
+) -> list[str]:
+    """The names this slot may try, its own first.
+
+    One at a time, a slot whose dish is turned away moves on to the next
+    slot's name, and that slot to the one after. Once a batch has written
+    every slot's recipe that would throw the next slot's recipe away and
+    send the rest of the week asking for their own, so a batched slot tries
+    the spare names first and another slot's only after those.
+    """
+    if not batched:
+        return names[index:]
+    own = names[index : index + 1]
+    spares = names[slot_count:]
+    later = names[index + 1 : slot_count]
+    return own + spares + later
+
+
+def _recipes_of(answer, count: int) -> dict[int, dict]:
+    """The batch answer's recipes by section number, 1-based.
+
+    An entry that names its section goes there; one that does not takes its
+    place in the list. A number outside the sections, or one already filled,
+    is dropped rather than guessed at.
+    """
+    items = answer.get("recipes") if isinstance(answer, dict) else answer
+    if not isinstance(items, list):
+        return {}
+    found: dict[int, dict] = {}
+    for position, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            continue
+        number = _whole(item.get("dish"))
+        if number is None:
+            number = position
+        if 1 <= number <= count and number not in found:
+            found[number] = item
+    return found
+
+
 async def _dish_for_slot(
     request: DishRequest,
     *,
@@ -1002,8 +1175,14 @@ async def _dish_for_slot(
     bases_this_week: frozenset[str] = frozenset(),
     rejected: list[RejectedDish],
     mint,
+    prewritten: dict | None = None,
 ) -> SavedRecipeSnapshot | None:
-    """The dish this slot keeps, after at most MAX_DISH_ATTEMPTS tries."""
+    """The dish this slot keeps, after at most MAX_DISH_ATTEMPTS tries.
+
+    ``prewritten`` is this slot's recipe from its meal type's batch call,
+    written for ``names[0]``. It stands in for the first try when that name
+    is still the slot's first candidate, and is checked like any other.
+    """
     candidates = [name for name in names if dish_key(name) not in taken | used]
     if names and not candidates:
         # Every name offered is already on the table this week. Ask the model
@@ -1022,31 +1201,44 @@ async def _dish_for_slot(
     closest: SavedRecipeSnapshot | None = None
     closest_name: str | None = None
     closest_miss = math.inf
+    # Usable only when it was written for the name this slot tries first;
+    # a batch recipe for a name another slot has since cooked is not this
+    # slot's dish.
+    if not (
+        prewritten is not None
+        and names
+        and candidates
+        and dish_key(candidates[0]) == dish_key(names[0])
+    ):
+        prewritten = None
     while attempt < budget:
         name = candidates[attempt] if attempt < len(candidates) else None
-        prompt = build_recipe_prompt(
-            meal_name=name or "",
-            meal_type=request.meal_type,
-            target_calories=int(request.target_calories),
-            cooking_time_minutes=request.minutes,
-            cuisine_region=cuisine_region,
-            protein_target=request.protein,
-            carbs_target=request.carbs,
-            fat_target=request.fat,
-        )
         attempt += 1
-        try:
-            payload = await ask(
-                prompt
-                + _slot_note_block(request.note)
-                + _day_so_far_block(eaten_today)
-                + KITCHEN_RULES
-                + ("" if name else NAME_IT_YOURSELF_RULE)
-                + language_block(language),
-                DISH_RECIPE_SYSTEM,
+        if attempt == 1 and prewritten is not None:
+            payload = prewritten
+        else:
+            prompt = build_recipe_prompt(
+                meal_name=name or "",
+                meal_type=request.meal_type,
+                target_calories=int(request.target_calories),
+                cooking_time_minutes=request.minutes,
+                cuisine_region=cuisine_region,
+                protein_target=request.protein,
+                carbs_target=request.carbs,
+                fat_target=request.fat,
             )
-        except Exception:  # noqa: BLE001 - one failed call is not the week
-            continue
+            try:
+                payload = await ask(
+                    prompt
+                    + _slot_note_block(request.note)
+                    + _day_so_far_block(eaten_today)
+                    + KITCHEN_RULES
+                    + ("" if name else NAME_IT_YOURSELF_RULE)
+                    + language_block(language),
+                    DISH_RECIPE_SYSTEM,
+                )
+            except Exception:  # noqa: BLE001 - one failed call is not the week
+                continue
         if not isinstance(payload, dict):
             continue
         if name and not str(payload.get("name") or "").strip():

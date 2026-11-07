@@ -30,6 +30,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.exceptions.ai_job_exceptions import (
+    AiJobAdmissionBusyError,
     AiJobConflictError,
     AiJobNotFoundError,
     AiJobNotRetryableError,
@@ -258,10 +259,18 @@ class AsyncAiJobRepository(AiJobRepositoryPort):
         if not types:
             raise ValueError("A worker must claim at least one AI job type")
         # All replicas serialize the short admission decision, then release
-        # the transaction before any provider work starts.
-        await self.session.execute(
-            text("SELECT pg_advisory_xact_lock(:key)"), {"key": _ADMISSION_LOCK_KEY}
-        )
+        # the transaction before any provider work starts. A lane that finds
+        # the decision under way steps back rather than queueing on the lock:
+        # waiting held a pooled connection for the whole wait, and those waits
+        # were most of the database's time while every lane polled.
+        admitted = (
+            await self.session.execute(
+                text("SELECT pg_try_advisory_xact_lock(:key)"),
+                {"key": _ADMISSION_LOCK_KEY},
+            )
+        ).scalar_one()
+        if not admitted:
+            raise AiJobAdmissionBusyError()
         now = await self._now()
         expired = and_(Job.status == _RUNNING, Job.lease_expires_at <= now)
         # A worker died while the user was cancelling: honour the cancel.

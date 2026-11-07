@@ -15,7 +15,10 @@ from tests.fixtures.fakes.fake_ai_jobs import JOB_ID, FakeAiJobsUow, make_claim
 from src.app.services.ai_jobs.executors import AiJobInterrupt
 from src.app.services.ai_jobs.signals import AiJobCancelSignals, AiJobWakeup
 from src.app.services.ai_jobs.worker import AiJobWorker
-from src.domain.exceptions.ai_job_exceptions import AiJobExecutionError
+from src.domain.exceptions.ai_job_exceptions import (
+    AiJobAdmissionBusyError,
+    AiJobExecutionError,
+)
 from src.domain.model.ai_jobs import (
     AiJobErrorKind,
     AiJobHeartbeat,
@@ -524,3 +527,34 @@ async def test_a_lane_claims_again_right_after_finishing_a_job(uow):
 
     assert claims == []
     uow.ai_jobs.complete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_lane_that_finds_admission_busy_looks_again_at_once(uow, caplog):
+    """Busy admission is not an error and must not cost the lane its backoff."""
+    stop = asyncio.Event()
+    wakeup = AiJobWakeup()
+    executor = _Executor(_returns(RESULT))
+    answers: list[Any] = [AiJobAdmissionBusyError(), make_claim(), None]
+
+    async def claim_next(**_):
+        answer = answers.pop(0)
+        if isinstance(answer, BaseException):
+            raise answer
+        if answer is None:
+            stop.set()
+            wakeup.notify()
+        return answer
+
+    uow.ai_jobs.claim_next.side_effect = claim_next
+    # A long poll: only an immediate retry claims within the timeout.
+    worker = _worker(
+        uow, {AiJobType.PARSE_TEXT: executor}, wakeup=wakeup, poll_seconds=30
+    )
+
+    with caplog.at_level(logging.ERROR):
+        await asyncio.wait_for(worker.run(stop), timeout=2)
+
+    assert answers == []
+    uow.ai_jobs.complete.assert_awaited_once()
+    assert "failed to claim" not in caplog.text

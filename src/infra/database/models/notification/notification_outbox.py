@@ -79,4 +79,15 @@ class NotificationOutboxORM(Base):
             "scheduled_for_utc",
             postgresql_where=text("status = 'processing'"),
         ),
+        # The dispatcher only ever reads its own notification types. Keyed by
+        # type first, so rows of retired types still sitting in 'pending'
+        # (tens of thousands of old reminders) are never walked: the due and
+        # expiry scans above read every pending row of every type, then
+        # filtered, on each tick. Both dispatcher scans use this one index.
+        Index(
+            "idx_notifications_type_open_expiry",
+            "notification_type",
+            "expires_at",
+            postgresql_where=text("status IN ('pending', 'processing')"),
+        ),
     )

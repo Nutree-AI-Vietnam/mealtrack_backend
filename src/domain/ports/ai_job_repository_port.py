@@ -95,6 +95,9 @@ class AiJobRepositoryPort(ABC):
 
         ``global_capacity`` caps running jobs of ``job_types`` (chat aside)
         across every worker, so each set of types has its own capacity.
+
+        Raises ``AiJobAdmissionBusyError`` when another worker is deciding
+        admission at this moment; the caller tries again shortly.
         """
 
     @abstractmethod

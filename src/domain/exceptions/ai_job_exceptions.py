@@ -42,3 +42,15 @@ class AiJobExecutionError(Exception):
     def __init__(self, code: str, message: str | None = None) -> None:
         self.code = code
         super().__init__(message or code)
+
+
+class AiJobAdmissionBusyError(Exception):
+    """Another worker is deciding admission right now; try again shortly.
+
+    Raised instead of waiting on the admission lock: a lane that waited held
+    a pooled database connection open for the whole wait, and the waits were
+    most of the database's time while nothing was being claimed.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("AI job admission is busy")

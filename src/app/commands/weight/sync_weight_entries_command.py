@@ -19,3 +19,5 @@ class SyncWeightEntriesCommand:
 
     user_id: str
     entries: List[WeightEntryData]
+    # Read a recorded_at without an offset in this zone when the user has none.
+    header_timezone: str | None = None
