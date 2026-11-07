@@ -471,3 +471,149 @@ class TestWhichModelWritesADish:
 
         with pytest.raises(TimeoutError):
             await handler._ask_many("prompt", "system")
+
+
+class _CatalogUow(_Uow):
+    """A unit of work that can read the catalogue, the plan and the profile."""
+
+    def __init__(self, plans, meals=()):
+        super().__init__(plans)
+        meal_list = list(meals)
+
+        async def list_selection_candidates():
+            return meal_list
+
+        async def get_by_id(**_):
+            return SimpleNamespace(preferences="prefs", timezone="Asia/Ho_Chi_Minh")
+
+        async def get_profile(_):
+            return None
+
+        self.catalog_recipes = SimpleNamespace(
+            list_selection_candidates=list_selection_candidates
+        )
+        plans.get_by_id = get_by_id
+        self.users = SimpleNamespace(get_profile=get_profile)
+
+
+_SERVICE = "src.app.services.weekly_meal_plan_service"
+_GENERATOR = (
+    "src.domain.services.weekly_meal_planner.weekly_plan_generation_service."
+    "WeeklyPlanGenerationService.generate"
+)
+
+
+def _catalogue_week(monkeypatch, picks):
+    """Stub the catalogue selection: ``picks`` maps (day, slot) to a recipe id."""
+    from src.domain.services.weekly_meal_planner.weekly_plan_generation_service import (  # noqa: E501
+        GeneratedSlot,
+    )
+
+    async def no_codes(uow, meals):
+        return ()
+
+    async def no_memory(uow, **_):
+        from src.domain.model.weekly_meal_planner.user_food_memory import EMPTY_MEMORY
+
+        return EMPTY_MEMORY
+
+    seen = {}
+
+    def generate(self, meals, **kwargs):
+        seen.update(kwargs)
+        return tuple(
+            GeneratedSlot(day, slot, picks.get((day, slot)))
+            for day in range(7)
+            for slot in range(3)
+        )
+
+    monkeypatch.setattr(f"{_SERVICE}._known_allergen_codes", no_codes)
+    monkeypatch.setattr(
+        f"{_SERVICE}._resolve_plan_preferences", lambda prefs, profile, codes: prefs
+    )
+    monkeypatch.setattr(f"{_SERVICE}._user_food_memory", no_memory)
+    monkeypatch.setattr(_GENERATOR, generate)
+    return seen
+
+
+class TestASlotTheModelCouldNotWrite:
+    @pytest.mark.asyncio
+    async def test_gets_a_catalogue_dish(self, monkeypatch):
+        """An unfilled slot reached Home as a meal nobody could log (422)."""
+        plans = _Plans()
+        handler = WriteWeeklyPlanDishesCommandHandler(
+            uow_factory=lambda: _CatalogUow(plans), generation_service=None
+        )
+
+        async def one_dish(*args, **kwargs):
+            from src.domain.services.weekly_meal_planner.ai_dish import WeekOfDishes
+
+            return WeekOfDishes(
+                dishes={(0, 1): _tofu_dish()}, unfilled=((0, 0), (5, 2))
+            )
+
+        monkeypatch.setattr(_GENERATE, one_dish)
+        seen = _catalogue_week(
+            monkeypatch, {(0, 0): "pho", (0, 1): "bun", (5, 2): "com-ga"}
+        )
+
+        result = await handler.handle(_COMMAND)
+
+        update = plans.updates[0]
+        assert update["slots"] == {(0, 0): "pho", (5, 2): "com-ga"}
+        assert list(update["saved_slots"]) == [(0, 1)]
+        assert seen["preferences"] == "prefs"
+        assert seen["daily_calories"] == _COMMAND.daily_calories
+        assert result["catalog_filled"] == 2
+        assert result["unfilled"] == []
+
+    @pytest.mark.asyncio
+    async def test_stays_empty_when_no_catalogue_dish_fits(self, monkeypatch):
+        plans = _Plans()
+        handler = WriteWeeklyPlanDishesCommandHandler(
+            uow_factory=lambda: _CatalogUow(plans), generation_service=None
+        )
+
+        async def one_dish(*args, **kwargs):
+            from src.domain.services.weekly_meal_planner.ai_dish import WeekOfDishes
+
+            return WeekOfDishes(dishes={(0, 1): _tofu_dish()}, unfilled=((0, 0),))
+
+        monkeypatch.setattr(_GENERATE, one_dish)
+        _catalogue_week(monkeypatch, {})
+
+        result = await handler.handle(_COMMAND)
+
+        assert plans.updates[0]["slots"] is None
+        assert result["unfilled"] == [[0, 0]]
+
+    @pytest.mark.asyncio
+    async def test_a_failing_catalogue_still_stores_the_written_dishes(
+        self, monkeypatch
+    ):
+        """An allergy the catalogue cannot check must not cost the week."""
+        plans = _Plans()
+        handler = WriteWeeklyPlanDishesCommandHandler(
+            uow_factory=lambda: _CatalogUow(plans), generation_service=None
+        )
+
+        async def one_dish(*args, **kwargs):
+            from src.domain.services.weekly_meal_planner.ai_dish import WeekOfDishes
+
+            return WeekOfDishes(dishes={(0, 1): _tofu_dish()}, unfilled=((0, 0),))
+
+        monkeypatch.setattr(_GENERATE, one_dish)
+        _catalogue_week(monkeypatch, {(0, 0): "pho"})
+
+        def unresolved(prefs, profile, codes):
+            raise ValueError("ALLERGY_UNRESOLVED")
+
+        monkeypatch.setattr(f"{_SERVICE}._resolve_plan_preferences", unresolved)
+
+        result = await handler.handle(_COMMAND)
+
+        update = plans.updates[0]
+        assert update["slots"] is None
+        assert list(update["saved_slots"]) == [(0, 1)]
+        assert update["status"] == WeeklyMealPlanStatus.DRAFT.value
+        assert result["unfilled"] == [[0, 0]]
