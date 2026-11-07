@@ -130,18 +130,38 @@ class WriteWeeklyPlanDishesCommandHandler(EventHandler):
         dishes = await photos.attach(week.dishes)
 
         async with self._uow_factory() as uow:
+            # A slot the model could not write gets a catalogue dish, never
+            # nothing: an empty slot shows a meal on Home that cannot be
+            # logged, cooked or shopped for.
+            catalog_slots = await catalog_fallback_slots(
+                uow,
+                user_id=command.user_id,
+                plan_id=command.plan_id,
+                week_start_date=command.week_start_date,
+                daily_calories=command.daily_calories,
+                coordinates=tuple(slot for slot in week.unfilled if slot not in dishes),
+            )
             await uow.weekly_meal_plans.update(
                 user_id=command.user_id,
                 plan_id=command.plan_id,
                 saved_slots=dishes,
+                slots=catalog_slots or None,
                 status=WeeklyMealPlanStatus.DRAFT.value,
             )
             await uow.commit()
 
+        unfilled = [slot for slot in week.unfilled if slot not in catalog_slots]
+        if unfilled:
+            logger.warning(
+                "Weekly plan %s left %d slots empty: no catalogue dish fits",
+                command.plan_id,
+                len(unfilled),
+            )
         return {
             "plan_id": command.plan_id,
             "dishes": len(week.dishes),
-            "unfilled": [list(slot) for slot in week.unfilled],
+            "catalog_filled": len(catalog_slots),
+            "unfilled": [list(slot) for slot in unfilled],
         }
 
     async def _price(self, lines):
@@ -204,6 +224,73 @@ def _requests(command: WriteWeeklyPlanDishesCommand) -> tuple[DishRequest, ...]:
                 )
             )
     return tuple(requests)
+
+
+async def catalog_fallback_slots(
+    uow,
+    *,
+    user_id: str,
+    plan_id: str,
+    week_start_date,
+    daily_calories: int,
+    coordinates: tuple[tuple[int, int], ...],
+) -> dict[tuple[int, int], str]:
+    """A catalogue dish for each of ``coordinates``, picked as a catalogue week.
+
+    The same selection a catalogue plan makes, with the plan's preferences
+    and the user's allergies, read only at the slots asked for. A slot no
+    eligible dish fits is left out. Never raises: a week the model wrote is
+    still worth storing when the catalogue cannot help.
+    """
+    if not coordinates:
+        return {}
+    try:
+        from src.app.services.weekly_meal_plan_service import (
+            _known_allergen_codes,
+            _resolve_plan_preferences,
+            _user_food_memory,
+        )
+        from src.domain.services.weekly_meal_planner.weekly_plan_generation_service import (  # noqa: E501
+            WeeklyPlanGenerationService,
+        )
+
+        repo = getattr(uow, "catalog_recipes", None)
+        lister = getattr(repo, "list_selection_candidates", None)
+        if lister is None:
+            return {}
+        plan = await uow.weekly_meal_plans.get_by_id(user_id=user_id, plan_id=plan_id)
+        if plan is None:
+            return {}
+        meals = await lister()
+        profile = await uow.users.get_profile(user_id)
+        # Unresolved allergies raise here, and no dish is better than one
+        # that cannot be checked against them.
+        preferences = _resolve_plan_preferences(
+            plan.preferences, profile, await _known_allergen_codes(uow, meals)
+        )
+        memory = await _user_food_memory(
+            uow,
+            user_id=user_id,
+            week_start_date=week_start_date,
+            timezone=getattr(plan, "timezone", None),
+        )
+        selected = WeeklyPlanGenerationService().generate(
+            meals,
+            user_id=user_id,
+            week_start_date=week_start_date.isoformat(),
+            daily_calories=daily_calories,
+            preferences=preferences,
+            memory=memory,
+        )
+    except Exception:  # noqa: BLE001 - the written dishes still get stored
+        logger.exception("Catalogue fallback failed for weekly plan %s", plan_id)
+        return {}
+    wanted = set(coordinates)
+    return {
+        (item.day_index, item.slot_index): item.recipe_id
+        for item in selected
+        if item.recipe_id and (item.day_index, item.slot_index) in wanted
+    }
 
 
 def _share(total: float | None, share: float) -> float | None:
