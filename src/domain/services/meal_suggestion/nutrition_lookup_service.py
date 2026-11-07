@@ -301,26 +301,26 @@ class NutritionLookupService:
         if per100 is not None:
             _cache_metrics["t2_hits"] += 1
             result = self._build_from_per100(per100, name, quantity_g, "T2_fatsecret")
-            await self._cache_result(cache_key, result)
+            await self._cache_result(cache_key, result, per100)
             return result
 
         # T3: AI estimate — last resort
         _cache_metrics["t3_hits"] += 1
         try:
-            result = await asyncio.wait_for(
-                self._ai_estimate(name, quantity_g), timeout=T3_TIMEOUT
+            estimate = await asyncio.wait_for(
+                self._ai_per100(name), timeout=T3_TIMEOUT
             )
         except TimeoutError:
             logger.warning("T3 AI timeout for %s", name)
             return _unresolved(name, quantity_g)
-        # _ai_estimate already turned an impossible estimate into zeros, read
-        # on the model's own per-100g numbers: read back from a portion
-        # rounded to 0.1 g, a teaspoon of seeds looked impossible (PYTHON-M9).
         # An ingredient nothing could price is zeroed, not guessed, so the
         # zero is never cached as if it were a real reading.
-        if result.source_tier == "unresolved":
-            return result
-        await self._cache_result(cache_key, result)
+        if estimate is None:
+            return _unresolved(name, quantity_g)
+        result = self._build_from_per100(estimate, name, quantity_g, "T3_ai_estimate")
+        # Cached as the model said it per 100 g: read back from a portion
+        # rounded to 0.1 g, a teaspoon of seeds would cache 107 g per 100 g.
+        await self._cache_result(cache_key, result, estimate)
         return result
 
     async def _lookup_ingredient(
@@ -384,8 +384,15 @@ class NutritionLookupService:
             food_reference_id=data.get("food_reference_id"),
         )
 
-    async def _cache_result(self, key: str, result: IngredientMacros) -> None:
-        """Schedule per-100g macros cache population."""
+    async def _cache_result(
+        self, key: str, result: IngredientMacros, per100: Any | None = None
+    ) -> None:
+        """Schedule per-100g macros cache population.
+
+        ``per100`` is the source's own per-100g reading when there is one.
+        Without it the values are read back from the portion, whose 0.1 g
+        rounding a small portion multiplies (a 1.4 g line by about 70).
+        """
         if self._cache_service is None:
             return
         # A zero-gram line (a pinch rounded down, an eaten share of a garnish)
@@ -394,15 +401,25 @@ class NutritionLookupService:
         if result.quantity_g <= 0:
             return
         try:
-            factor = 100.0 / result.quantity_g
-            data = {
-                "protein": round(result.protein * factor, 2),
-                "carbs": round(result.carbs * factor, 2),
-                "fat": round(result.fat * factor, 2),
-                "fiber": round(result.fiber * factor, 2),
-                "sugar": round(result.sugar * factor, 2),
-                "source_tier": result.source_tier,
-            }
+            if per100 is not None:
+                data = {
+                    "protein": round(float(per100.protein), 2),
+                    "carbs": round(float(per100.carbs), 2),
+                    "fat": round(float(per100.fat), 2),
+                    "fiber": round(float(per100.fiber or 0.0), 2),
+                    "sugar": round(float(per100.sugar or 0.0), 2),
+                    "source_tier": result.source_tier,
+                }
+            else:
+                factor = 100.0 / result.quantity_g
+                data = {
+                    "protein": round(result.protein * factor, 2),
+                    "carbs": round(result.carbs * factor, 2),
+                    "fat": round(result.fat * factor, 2),
+                    "fiber": round(result.fiber * factor, 2),
+                    "sugar": round(result.sugar * factor, 2),
+                    "source_tier": result.source_tier,
+                }
             if result.food_reference_id is not None:
                 data["food_reference_id"] = result.food_reference_id
             await self._cache_service.set(key, data, NUTRITION_CACHE_TTL)
@@ -469,8 +486,8 @@ class NutritionLookupService:
             food_reference_id=None,
         )
 
-    async def _ai_estimate(self, name: str, quantity_g: float) -> IngredientMacros:
-        """T3 fallback: ask AI for per-100g macros. Never raises."""
+    async def _ai_per100(self, name: str) -> SingleIngredientSchema | None:
+        """T3 fallback: the AI's per-100g macros, or None. Never raises."""
         logger.warning("T3 AI estimate used for ingredient: %s", name)
 
         prompt = (
@@ -506,7 +523,7 @@ class NutritionLookupService:
             )
         except Exception as exc:
             logger.error("T3 AI estimate failed for ingredient '%s': %s", name, exc)
-            return _unresolved(name, quantity_g)
+            return None
         # Judged on the model's per-100g numbers, before any scaling or
         # rounding to the portion, which inflated small portions.
         problem = per_100g_problem(
@@ -524,14 +541,8 @@ class NutritionLookupService:
                 schema_data.fiber,
             )
             _cache_metrics["t3_rejected"] += 1
-            return _unresolved(name, quantity_g)
-        try:
-            return self._build_from_per100(
-                schema_data, name, quantity_g, "T3_ai_estimate"
-            )
-        except Exception as exc:
-            logger.error("T3 AI estimate failed for ingredient '%s': %s", name, exc)
-            return _unresolved(name, quantity_g)
+            return None
+        return schema_data
 
     # ------------------------------------------------------------------
     # Unit conversion
