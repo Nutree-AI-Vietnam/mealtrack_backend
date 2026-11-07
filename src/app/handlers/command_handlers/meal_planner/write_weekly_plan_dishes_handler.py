@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -35,6 +36,14 @@ REFERENCE_DISH_LIMIT = 40
 # Output room for one meal type's recipes in a single call: up to eight
 # recipes at ~1,200 tokens each, the single-recipe budget.
 BATCH_MAX_TOKENS = 10_000
+# Seven recipes are four to six thousand output tokens. The shared OpenAI
+# client times out at 20s - sized for one scan - so a batch on it timed out,
+# retried, fell through every model in the chain and only then reached the
+# per-slot path, spending minutes of a week's 900s deadline on nothing.
+BATCH_REQUEST_TIMEOUT_SECONDS = 90.0
+# The whole batch call, every fallback included. Past this the meal type's
+# slots ask one at a time, as they did before batching, with time to spare.
+BATCH_DEADLINE_SECONDS = 100.0
 
 
 @handles(WriteWeeklyPlanDishesCommand)
@@ -153,13 +162,19 @@ class WriteWeeklyPlanDishesCommandHandler(EventHandler):
 
     async def _ask_many(self, prompt: str, system_message: str):
         # A meal type's recipes in one answer: room for every one of them,
-        # so the JSON is never cut off and lost whole.
-        return await self._generation.generate_meal_plan_async(
-            prompt,
-            system_message,
-            "json",
-            max_tokens=BATCH_MAX_TOKENS,
-            model_purpose="recipe",
+        # so the JSON is never cut off and lost whole, and time to write them.
+        # A batch that runs past its deadline raises TimeoutError, which the
+        # week treats like any failed batch: its slots ask on their own.
+        return await asyncio.wait_for(
+            self._generation.generate_meal_plan_async(
+                prompt,
+                system_message,
+                "json",
+                max_tokens=BATCH_MAX_TOKENS,
+                model_purpose="recipe",
+                request_timeout_seconds=BATCH_REQUEST_TIMEOUT_SECONDS,
+            ),
+            timeout=BATCH_DEADLINE_SECONDS,
         )
 
 

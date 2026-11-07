@@ -176,6 +176,48 @@ async def test_planner_provider_bounds_transport_timeout_without_mutating_shared
 
 
 @pytest.mark.asyncio
+async def test_a_long_answer_gets_its_own_timeout_on_the_shared_client():
+    """A meal type's recipes in one call cannot live inside a 20s scan budget."""
+    provider = _provider()
+    provider._langchain.generate_raw = AsyncMock(
+        return_value=LangChainOpenAIResult(
+            parsed={"raw_content": '{"recipes": []}'}, raw_message=SimpleNamespace()
+        )
+    )
+
+    await provider.generate(
+        model="gpt-5.4-mini-2026-03-17",
+        prompt="seven recipes",
+        system_message="rules",
+        purpose_hint="recipe",
+        request_timeout_seconds=90,
+    )
+
+    kwargs = provider._langchain.generate_raw.await_args.kwargs
+    assert kwargs["request_kwargs"]["timeout"] == 90.0
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_call_keeps_the_shared_client_timeout():
+    provider = _provider()
+    provider._langchain.generate_raw = AsyncMock(
+        return_value=LangChainOpenAIResult(
+            parsed={"raw_content": "{}"}, raw_message=SimpleNamespace()
+        )
+    )
+
+    await provider.generate(
+        model="gpt-5.4-mini-2026-03-17",
+        prompt="one recipe",
+        system_message="rules",
+        purpose_hint="recipe",
+    )
+
+    kwargs = provider._langchain.generate_raw.await_args.kwargs
+    assert "timeout" not in kwargs["request_kwargs"]
+
+
+@pytest.mark.asyncio
 async def test_generate_structured_text_calls_adapter_with_prompt_cache_kwargs():
     provider = _provider()
     parsed = _parsed_vision_response()

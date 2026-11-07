@@ -42,9 +42,15 @@ class MealGenerationService(MealGenerationServicePort):
         schema: type = None,
         model_purpose: str | None = None,
         thinking_budget: int | None = None,
+        request_timeout_seconds: float | None = None,
     ):
         """Generate meal plan — runs directly on the caller's event loop."""
         purpose = PURPOSE_MAP.get(model_purpose, ModelPurpose.GENERAL)
+        extra = (
+            {"request_timeout_seconds": request_timeout_seconds}
+            if request_timeout_seconds
+            else {}
+        )
         return await self._ai_manager.generate(
             purpose=purpose,
             prompt=prompt,
@@ -52,4 +58,5 @@ class MealGenerationService(MealGenerationServicePort):
             response_type=response_type,
             max_tokens=max_tokens,
             schema=schema,
+            **extra,
         )

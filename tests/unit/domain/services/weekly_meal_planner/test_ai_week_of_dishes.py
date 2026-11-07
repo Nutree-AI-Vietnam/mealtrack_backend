@@ -1710,3 +1710,27 @@ def test_a_week_counts_why_its_dishes_were_turned_away():
         "TOO_FEW_STEPS": 1,
         "recipe serves food raw or rare": 1,
     }
+
+
+@pytest.mark.asyncio
+async def test_a_failed_batch_call_stops_batching_for_the_rest_of_the_week():
+    """The next meal type's batch is the same size and would time out too."""
+    model = _BatchModel(["Beef pho", "Grilled chicken bowl"], batch_fails=True)
+    requests = (
+        DishRequest(
+            day_index=0, slot_index=0, meal_type="breakfast", target_calories=600
+        ),
+        DishRequest(day_index=0, slot_index=1, meal_type="lunch", target_calories=600),
+    )
+
+    week = await generate_week_of_dishes(
+        requests,
+        ask=model.ask,
+        ask_many=model.ask_many,
+        new_id=lambda: "x",
+        **BUILDERS,
+    )
+
+    assert len(model.batch_prompts) == 1
+    assert len(week.dishes) == 2
+    assert len(model.recipe_prompts) == 2

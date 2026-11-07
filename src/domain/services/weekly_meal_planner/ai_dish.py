@@ -916,7 +916,7 @@ async def generate_week_of_dishes(
                 planned[slot.day_index] = protein
         written: dict[int, dict] = {}
         if ask_many is not None:
-            written = await _batch_recipes(
+            batch = await _batch_recipes(
                 slots,
                 names,
                 ask_many=ask_many,
@@ -926,6 +926,13 @@ async def generate_week_of_dishes(
                 day_dishes=day_dishes,
                 taken=taken | used,
             )
+            if batch is None:
+                # The call itself failed - timed out, most likely. The next
+                # meal type's batch is the same size and would fail the same
+                # way, so the rest of the week asks one slot at a time.
+                ask_many = None
+            else:
+                written = batch
         for index, request in enumerate(slots):
             snapshot = await _dish_for_slot(
                 request,
@@ -1049,13 +1056,14 @@ async def _batch_recipes(
     language,
     day_dishes: Mapping[int, list[str]],
     taken: set[str],
-) -> dict[int, dict]:
+) -> dict[int, dict] | None:
     """Every slot's recipe for this meal type from one call, by slot index.
 
     A slot is left out when it has no name of its own or its name is already
-    on the table, and the whole batch is empty when the call fails or reads
-    as nothing: either way the slot asks for its own recipe, as it always
-    did. Nothing here decides whether a recipe is kept.
+    on the table, and the batch is empty when the answer reads as nothing:
+    either way the slot asks for its own recipe, as it always did. None means
+    the call itself failed, so the caller stops batching. Nothing here
+    decides whether a recipe is kept.
     """
     wanted = [
         (index, slot, names[index])
@@ -1101,7 +1109,7 @@ async def _batch_recipes(
             DISH_BATCH_SYSTEM,
         )
     except Exception:  # noqa: BLE001 - every slot can still ask on its own
-        return {}
+        return None
     by_number = _recipes_of(answer, count)
     return {
         index: by_number[number]
