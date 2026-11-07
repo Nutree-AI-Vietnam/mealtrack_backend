@@ -1,6 +1,7 @@
 # Multi-stage build for faster deployments
 # Stage 1: Build dependencies
-FROM python:3.13.2-slim AS builder
+# Name the Debian release so a Python bump does not silently change the OS.
+FROM python:3.13.18-slim-bookworm AS builder
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -21,7 +22,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Stage 2: Runtime
-FROM python:3.13.2-slim
+FROM python:3.13.18-slim-bookworm
 
 # Install runtime dependencies only. ffmpeg lets recipe import read a video's
 # speech and on-screen text when its caption is not enough.

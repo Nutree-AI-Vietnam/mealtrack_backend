@@ -17,7 +17,7 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # Configuration
 COVERAGE_THRESHOLD="${COVERAGE_THRESHOLD:-70}"
-PYTHON_VERSION="${PYTHON_VERSION:-3.13.2}"
+PYTHON_VERSION="${PYTHON_VERSION:-3.13.18}"
 
 # Install dependencies
 install_dependencies() {
