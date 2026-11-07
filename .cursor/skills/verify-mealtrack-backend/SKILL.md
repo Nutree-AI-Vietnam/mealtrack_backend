@@ -22,7 +22,7 @@ From the repo root:
 `launch` refuses a busy port 8000, 5432, or 6379, and refuses compose containers it did not label. It then:
 
 1. `docker compose up -d --wait` until Postgres and Redis are healthy.
-2. `uv python install 3.13.2`, `uv sync --frozen`, then `scripts/init_postgres_db.py` and `alembic upgrade head` on `postgresql://nutree:nutree@127.0.0.1:5432/nutree`. A new volume is empty.
+2. `uv python install 3.13.18`, `uv sync --frozen`, then `scripts/init_postgres_db.py` and `alembic upgrade head` on `postgresql://nutree:nutree@127.0.0.1:5432/nutree`. A new volume is empty.
 3. Writes a throwaway service-account JSON under `/tmp/mealtrack-verify/`. Startup calls `firebase_admin.initialize_app`, and this repo ships no Firebase credentials. The file is scaffolding, not a Firebase project. Cleanup deletes it.
 4. Starts one uvicorn process on `127.0.0.1:8000` (override with `VERIFY_PORT` before launch).
 

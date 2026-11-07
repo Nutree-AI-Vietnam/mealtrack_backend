@@ -288,16 +288,16 @@ EOF
   # shellcheck disable=SC1091
   source "$STATE/env.sh"
   cd "$ROOT"
-  echo "verify: syncing python 3.13.2"
-  uv python install 3.13.2
+  echo "verify: syncing python 3.13.18"
+  uv python install 3.13.18
   uv sync --frozen
   echo "verify: initializing schema"
-  uv run --offline --python 3.13.2 python scripts/init_postgres_db.py
-  uv run --offline --python 3.13.2 python -m alembic upgrade head
+  uv run --offline --python 3.13.18 python scripts/init_postgres_db.py
+  uv run --offline --python 3.13.18 python -m alembic upgrade head
 
   echo "verify: starting uvicorn"
   # nohup + disown so the server survives this script exiting.
-  nohup uv run --offline --python 3.13.2 python -m uvicorn src.api.main:app \
+  nohup uv run --offline --python 3.13.18 python -m uvicorn src.api.main:app \
     --host 127.0.0.1 --port "$PORT" >"$STATE/uvicorn.log" 2>&1 &
   local pid=$!
   disown "$pid" 2>/dev/null || true

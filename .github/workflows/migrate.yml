@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     env:
-      PYTHON_VERSION: "3.13.2"
+      PYTHON_VERSION: "3.13.18"
       DATABASE_URL_DIRECT: ${{ secrets.DATABASE_URL_DIRECT }}
 
     steps:
