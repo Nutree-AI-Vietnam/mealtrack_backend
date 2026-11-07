@@ -757,3 +757,69 @@ async def test_unresolved_ingredients_are_counted_on_the_meal():
 
     assert meal.unresolved_count == 1
     assert meal.t3_count == 0
+
+
+@pytest.mark.asyncio
+async def test_a_believable_t3_answer_for_a_tiny_portion_is_kept():
+    """PYTHON-M9: a teaspoon of seeds was judged on its portion, rounded to
+    0.1 g, read back per 100 g. 101 g of macros per 100 g (inside the limit)
+    became 107 g and the ingredient went to zero."""
+    svc = _make_service(
+        ref_result=None,
+        resolver_result=None,
+        gen_result={
+            "protein": 32.9,
+            "carbs": 20.9,
+            "fat": 46.9,
+            "fiber": 10.0,
+            "sugar": 0.5,
+        },
+    )
+
+    result = await svc._lookup_ingredient("black sesame seeds", 1.4)
+
+    assert result.source_tier == "T3_ai_estimate"
+    assert result.fat == pytest.approx(0.7)
+
+
+@pytest.mark.asyncio
+async def test_an_impossible_t3_answer_is_logged_per_100g(caplog):
+    """The log names the model's own per-100g numbers, not a portion's."""
+    svc = _make_service(
+        ref_result=None,
+        resolver_result=None,
+        gen_result={
+            "protein": 24.0,
+            "carbs": 31.0,
+            "fat": 70.0,
+            "fiber": 12.0,
+            "sugar": 0.5,
+        },
+    )
+
+    with caplog.at_level("ERROR"):
+        result = await svc._lookup_ingredient("black sesame seeds", 10.0)
+
+    assert result.source_tier == "unresolved"
+    assert "per 100 g P=24.0 C=31.0 F=70.0" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_t3_asks_within_the_physical_limit():
+    svc = _make_service(
+        ref_result=None,
+        resolver_result=None,
+        gen_result={
+            "protein": 8.0,
+            "carbs": 3.0,
+            "fat": 1.0,
+            "fiber": 0.0,
+            "sugar": 0.0,
+        },
+    )
+
+    await svc._lookup_ingredient("truffle oil", 20.0)
+
+    system_message = svc._gen.generate_meal_plan_async.call_args[0][1]
+    assert "protein + carbs + fat can never exceed 100" in system_message
+    assert "includes fiber" in system_message

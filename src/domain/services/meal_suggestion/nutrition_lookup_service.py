@@ -313,14 +313,9 @@ class NutritionLookupService:
         except TimeoutError:
             logger.warning("T3 AI timeout for %s", name)
             return _unresolved(name, quantity_g)
-        problem = _result_problem(result)
-        if problem:
-            logger.error(
-                "T3 AI estimate is not food (%s) for '%s': P=%s C=%s F=%s",
-                problem, name, result.protein, result.carbs, result.fat,
-            )
-            _cache_metrics["t3_rejected"] += 1
-            return _unresolved(name, quantity_g)
+        # _ai_estimate already turned an impossible estimate into zeros, read
+        # on the model's own per-100g numbers: read back from a portion
+        # rounded to 0.1 g, a teaspoon of seeds looked impossible (PYTHON-M9).
         # An ingredient nothing could price is zeroed, not guessed, so the
         # zero is never cached as if it were a real reading.
         if result.source_tier == "unresolved":
@@ -482,9 +477,15 @@ class NutritionLookupService:
             f"What are the macros per 100g for '{name}'? "
             "Return JSON with keys: protein, carbs, fat, fiber, sugar (all floats, grams)."
         )
+        # The physical limit, stated: dense foods (seeds, nuts, oils) were
+        # estimated past 100 g of macros per 100 g and thrown away (PYTHON-M9).
         system_message = (
             "You are a nutrition database assistant. "
-            "Return only JSON with per-100g macros."
+            "Return only JSON with per-100g macros of the food as usually eaten, "
+            "like a food composition table (USDA, the Vietnamese food table). "
+            "carbs is total carbohydrate and includes fiber and sugar. "
+            "protein + carbs + fat can never exceed 100: water and ash take "
+            "the rest, and even dry seeds and nuts stay near 85-95 g."
         )
 
         try:
@@ -503,6 +504,28 @@ class NutritionLookupService:
             schema_data = (
                 SingleIngredientSchema(**raw) if isinstance(raw, dict) else raw
             )
+        except Exception as exc:
+            logger.error("T3 AI estimate failed for ingredient '%s': %s", name, exc)
+            return _unresolved(name, quantity_g)
+        # Judged on the model's per-100g numbers, before any scaling or
+        # rounding to the portion, which inflated small portions.
+        problem = per_100g_problem(
+            schema_data.protein, schema_data.carbs, schema_data.fat, schema_data.fiber
+        )
+        if problem:
+            logger.error(
+                "T3 AI estimate is not food (%s) for '%s': per 100 g "
+                "P=%s C=%s F=%s fiber=%s",
+                problem,
+                name,
+                schema_data.protein,
+                schema_data.carbs,
+                schema_data.fat,
+                schema_data.fiber,
+            )
+            _cache_metrics["t3_rejected"] += 1
+            return _unresolved(name, quantity_g)
+        try:
             return self._build_from_per100(
                 schema_data, name, quantity_g, "T3_ai_estimate"
             )
@@ -681,19 +704,6 @@ def _ref_problem(ref: dict[str, Any]) -> str | None:
         ref.get("carbs_100g"),
         ref.get("fat_100g"),
         ref.get("fiber_100g") or 0.0,
-    )
-
-
-def _result_problem(result: IngredientMacros) -> str | None:
-    """Why a resolved ingredient cannot be food, read back as per-100g."""
-    if result.quantity_g <= 0:
-        return None
-    factor = 100.0 / result.quantity_g
-    return per_100g_problem(
-        result.protein * factor,
-        result.carbs * factor,
-        result.fat * factor,
-        result.fiber * factor,
     )
 
 
