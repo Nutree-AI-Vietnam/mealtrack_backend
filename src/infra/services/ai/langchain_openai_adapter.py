@@ -253,6 +253,11 @@ def _normalize_for_openai_structured_outputs(value: Any) -> Any:
             continue
         normalized[key] = _normalize_for_openai_structured_outputs(child)
 
+    # Strict mode refuses a $ref with any keyword beside it (a nested model
+    # given a Field description becomes {"$ref", "description"}): PYTHON-M8.
+    if "$ref" in normalized:
+        return {"$ref": normalized["$ref"]}
+
     if normalized.get("type") == "object":
         properties = normalized.get("properties")
         if isinstance(properties, dict):
