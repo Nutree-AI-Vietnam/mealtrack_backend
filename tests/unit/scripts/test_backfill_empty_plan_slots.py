@@ -81,6 +81,7 @@ def _setup(monkeypatch, plan):
 
 
 _PLAN = SimpleNamespace(
+    revision=7,
     week_start_date=date(2026, 11, 2),
     daily_calories=1700,
     slots=(
@@ -109,6 +110,7 @@ class TestFillingOnePlan:
                 "user_id": "user-1",
                 "plan_id": "plan-1",
                 "slots": {(0, 1): "recipe-0-1", (5, 2): "recipe-5-2"},
+                "expected_revision": 7,
             }
         ]
         assert uows[-1].committed
@@ -155,3 +157,36 @@ def test_the_selection_only_reads_empty_open_slots():
     assert "saved_suggestion_id IS NULL" in sql
     assert "is_logged IS false" in sql
     assert "is_skipped IS NOT true" in sql
+
+
+class TestAWeekTheUserChanged:
+    @pytest.mark.asyncio
+    async def test_is_skipped_not_overwritten(self, monkeypatch, capsys):
+        """The user filled or skipped a slot while its dish was being picked."""
+        from src.domain.exceptions.weekly_meal_planner_exceptions import (
+            WeeklyMealPlanConflictError,
+        )
+
+        plans, _, _ = _setup(monkeypatch, _PLAN)
+
+        async def stale(**kwargs):
+            raise WeeklyMealPlanConflictError(
+                "Weekly meal plan changed since it was loaded",
+                error_code="WEEKLY_PLAN_STALE_REVISION",
+            )
+
+        plans.update = stale
+
+        async def one_plan(since, plan_ids):
+            return [("plan-1", "user-1")]
+
+        monkeypatch.setattr(backfill, "_plans_with_empty_slots", one_plan)
+
+        summary = await backfill._run(
+            SimpleNamespace(since=date(2026, 11, 2), plan_id=[], dry_run=False)
+        )
+
+        assert summary["plans_changed_meanwhile"] == 1
+        assert summary["plans_updated"] == 0
+        assert summary["failed"] == 0
+        assert "changed meanwhile" in capsys.readouterr().err

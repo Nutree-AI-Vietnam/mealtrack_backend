@@ -10,7 +10,8 @@ allergies, the catalogue week's choice at that slot.
 
 Only slots that are empty, not logged and not skipped are touched, each
 plan in its own transaction. A filled slot moves the plan's revision, so
-an open app reloads the week rather than writing over it.
+an open app reloads the week rather than writing over it, and a week the
+user changed while its dishes were picked is skipped (WEEKLY_PLAN_STALE_REVISION).
 
     python scripts/backfill_empty_plan_slots.py --dry-run
     python scripts/backfill_empty_plan_slots.py --plan-id <plan id>
@@ -32,6 +33,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.app.handlers.command_handlers.meal_planner.write_weekly_plan_dishes_handler import (  # noqa: E501
     catalog_fallback_slots,
+)
+from src.domain.exceptions.weekly_meal_planner_exceptions import (
+    WeeklyMealPlanConflictError,
 )
 from src.infra.database.models.weekly_meal_planner.weekly_meal_plan import (
     WeeklyMealPlanORM,
@@ -73,10 +77,16 @@ def main() -> None:
 
 async def _run(args) -> dict[str, int]:
     plans = await _plans_with_empty_slots(args.since, tuple(args.plan_id))
-    filled = left_empty = failed = updated_plans = 0
+    filled = left_empty = failed = updated_plans = changed = 0
     for plan_id, user_id in plans:
         try:
             picked, empty = await _fill(plan_id, user_id, dry_run=args.dry_run)
+        except WeeklyMealPlanConflictError:
+            # the user edited the week while its dishes were picked: theirs
+            # stands, and a rerun picks up whatever is still empty
+            changed += 1
+            print(f"skipped plan={plan_id}: it changed meanwhile", file=sys.stderr)
+            continue
         except Exception as exc:  # noqa: BLE001 - one plan never stops the run
             failed += 1
             print(f"failed plan={plan_id}: {exc!r}", file=sys.stderr)
@@ -90,6 +100,7 @@ async def _run(args) -> dict[str, int]:
         "plans_updated": updated_plans,
         "slots_filled": filled,
         "slots_left_empty": left_empty,
+        "plans_changed_meanwhile": changed,
         "failed": failed,
     }
 
@@ -153,8 +164,13 @@ async def _fill(plan_id: str, user_id: str, *, dry_run: bool) -> tuple[int, int]
             print(f"  plan={plan_id} day={day} slot={slot} -> {recipe_id}")
         if dry_run or not picks:
             return len(picks), len(empty)
+        # Only onto the week as it was read: a slot the user filled or
+        # skipped since then is not overwritten.
         await uow.weekly_meal_plans.update(
-            user_id=user_id, plan_id=plan_id, slots=picks
+            user_id=user_id,
+            plan_id=plan_id,
+            slots=picks,
+            expected_revision=plan.revision,
         )
         await uow.commit()
         return len(picks), len(empty)
