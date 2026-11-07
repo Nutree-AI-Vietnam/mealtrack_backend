@@ -131,8 +131,10 @@ class WriteWeeklyPlanDishesCommandHandler(EventHandler):
         return await self._nutrition.calculate_meal_macros(lines)
 
     async def _ask(self, prompt: str, system_message: str):
+        # A dish is a recipe: Luna first, Workers AI only as the last fallback.
+        # Without a purpose this fell to "general", where Workers AI runs first.
         return await self._generation.generate_meal_plan_async(
-            prompt, system_message, "json"
+            prompt, system_message, "json", model_purpose="recipe"
         )
 
 
