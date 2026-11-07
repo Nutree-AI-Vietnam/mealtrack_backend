@@ -415,3 +415,21 @@ class TestWhichModelWritesADish:
         await handler._ask("prompt", "system")
 
         assert calls[0][1]["model_purpose"] == "recipe"
+
+    @pytest.mark.asyncio
+    async def test_a_meal_type_s_recipes_are_asked_for_as_recipes_with_room(self):
+        calls = []
+
+        class _Generation:
+            async def generate_meal_plan_async(self, *args, **kwargs):
+                calls.append(kwargs)
+                return {}
+
+        handler = WriteWeeklyPlanDishesCommandHandler(
+            uow_factory=None, generation_service=_Generation()
+        )
+
+        await handler._ask_many("prompt", "system")
+
+        assert calls[0]["model_purpose"] == "recipe"
+        assert calls[0]["max_tokens"] >= 8_000

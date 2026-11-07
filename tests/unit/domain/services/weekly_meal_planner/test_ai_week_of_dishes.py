@@ -1480,3 +1480,167 @@ class TestTheCatalogueHoldsThingsThatAreNotMeals:
     def test_it_is_said_as_a_fact_about_the_catalogue(self):
         """Not a warning about the model: the rows really are in there."""
         assert "The catalogue holds those too" in reference_block(("Bingsu",))
+
+
+# ---------------------------------------------------------------------------
+# One call writes a meal type's recipes
+# ---------------------------------------------------------------------------
+
+
+def _section_names(prompt):
+    return [_requested_name(part) for part in prompt.split("=== DISH ")[1:]]
+
+
+class _BatchModel(_Model):
+    """A model that also writes a meal type's recipes in one answer."""
+
+    def __init__(self, names, recipes=None, batch=None, batch_fails=False):
+        super().__init__(names, recipes)
+        self._batch = batch or {}
+        self._batch_fails = batch_fails
+        self.batch_prompts = []
+
+    async def ask_many(self, prompt, system):
+        self.batch_prompts.append(prompt)
+        if self._batch_fails:
+            raise RuntimeError("the answer was cut off")
+        entries = []
+        for number, name in enumerate(_section_names(prompt), start=1):
+            recipe = self._batch.get(name, self._recipes.get(name, _recipe(name)))
+            if recipe is None:
+                continue
+            entries.append({"dish": number, **recipe})
+        return {"recipes": entries}
+
+    @property
+    def recipe_prompts(self):
+        return [p for p in self.prompts if _requested_name(p)]
+
+
+THREE = ["Grilled chicken bowl", "Lemongrass pork", "Steamed fish plate"]
+
+
+@pytest.mark.asyncio
+async def test_a_meal_type_s_recipes_come_back_in_one_call():
+    model = _BatchModel(THREE)
+
+    week = await generate_week_of_dishes(
+        _requests(3),
+        ask=model.ask,
+        ask_many=model.ask_many,
+        new_id=lambda: "x",
+        **BUILDERS,
+    )
+
+    assert len(week.dishes) == 3
+    assert week.unfilled == ()
+    assert len(model.batch_prompts) == 1
+    assert _section_names(model.batch_prompts[0]) == THREE
+    # Not one slot had to ask for its own recipe.
+    assert model.recipe_prompts == []
+
+
+@pytest.mark.asyncio
+async def test_a_batch_recipe_is_checked_like_any_other_and_only_its_slot_asks_again():
+    unsafe = _recipe(
+        "Grilled chicken bowl", steps=[{"instruction": "Slice the raw chicken."}]
+    )
+    model = _BatchModel(
+        [*THREE, "Beef noodle soup"], batch={"Grilled chicken bowl": unsafe}
+    )
+
+    week = await generate_week_of_dishes(
+        _requests(3),
+        ask=model.ask,
+        ask_many=model.ask_many,
+        new_id=lambda: "x",
+        **BUILDERS,
+    )
+
+    assert len(week.dishes) == 3
+    assert week.rejected[0].name == "Grilled chicken bowl"
+    # The slot took the spare name rather than the next slot's, so the
+    # rest of the week kept the recipes the batch wrote for it.
+    assert [week.dishes[(day, 1)].name for day in range(3)] == [
+        "Beef noodle soup",
+        "Lemongrass pork",
+        "Steamed fish plate",
+    ]
+    assert [_requested_name(p) for p in model.recipe_prompts] == ["Beef noodle soup"]
+
+
+@pytest.mark.asyncio
+async def test_a_recipe_missing_from_the_batch_is_asked_for_on_its_own():
+    model = _BatchModel(THREE, batch={"Lemongrass pork": None})
+
+    week = await generate_week_of_dishes(
+        _requests(3),
+        ask=model.ask,
+        ask_many=model.ask_many,
+        new_id=lambda: "x",
+        **BUILDERS,
+    )
+
+    assert len(week.dishes) == 3
+    assert [_requested_name(p) for p in model.recipe_prompts] == ["Lemongrass pork"]
+
+
+@pytest.mark.asyncio
+async def test_a_batch_call_that_fails_falls_back_to_one_call_per_slot():
+    model = _BatchModel(THREE, batch_fails=True)
+
+    week = await generate_week_of_dishes(
+        _requests(3),
+        ask=model.ask,
+        ask_many=model.ask_many,
+        new_id=lambda: "x",
+        **BUILDERS,
+    )
+
+    assert len(week.dishes) == 3
+    assert len(model.recipe_prompts) == 3
+
+
+@pytest.mark.asyncio
+async def test_batch_entries_land_on_their_own_section_whatever_their_order():
+    model = _BatchModel(THREE)
+
+    async def reversed_answer(prompt, system):
+        answer = await model.ask_many(prompt, system)
+        return {"recipes": list(reversed(answer["recipes"]))}
+
+    week = await generate_week_of_dishes(
+        _requests(3),
+        ask=model.ask,
+        ask_many=reversed_answer,
+        new_id=lambda: "x",
+        **BUILDERS,
+    )
+
+    assert [week.dishes[(day, 1)].name for day in range(3)] == THREE
+    assert model.recipe_prompts == []
+
+
+@pytest.mark.asyncio
+async def test_a_later_meal_type_s_batch_knows_what_each_day_already_eats():
+    model = _BatchModel(["Beef pho", "Grilled chicken bowl"])
+    requests = (
+        DishRequest(
+            day_index=0, slot_index=0, meal_type="breakfast", target_calories=600
+        ),
+        DishRequest(day_index=0, slot_index=1, meal_type="lunch", target_calories=600),
+    )
+
+    await generate_week_of_dishes(
+        requests,
+        ask=model.ask,
+        ask_many=model.ask_many,
+        new_id=lambda: "x",
+        **BUILDERS,
+    )
+
+    assert len(model.batch_prompts) == 2
+    breakfast = model.batch_prompts[0].split("=== DISH ")[1]
+    lunch = model.batch_prompts[1].split("=== DISH ")[1]
+    assert "Earlier today this person eats" not in breakfast
+    assert "Earlier today this person eats: Beef pho" in lunch

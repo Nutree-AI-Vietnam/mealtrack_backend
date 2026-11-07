@@ -32,6 +32,9 @@ logger = logging.getLogger(__name__)
 # kitchen's knowledge now, not a style hint, so a meal type needs enough of
 # it to find seven distinct dishes among rows that include headlines.
 REFERENCE_DISH_LIMIT = 40
+# Output room for one meal type's recipes in a single call: up to eight
+# recipes at ~1,200 tokens each, the single-recipe budget.
+BATCH_MAX_TOKENS = 10_000
 
 
 @handles(WriteWeeklyPlanDishesCommand)
@@ -78,6 +81,7 @@ class WriteWeeklyPlanDishesCommandHandler(EventHandler):
                 memory_text=memory_text,
                 language=command.language,
                 on_dish=photos.start,
+                ask_many=self._ask_many,
             )
         except PricingUnavailable as exc:
             photos.cancel()
@@ -135,6 +139,17 @@ class WriteWeeklyPlanDishesCommandHandler(EventHandler):
         # Without a purpose this fell to "general", where Workers AI runs first.
         return await self._generation.generate_meal_plan_async(
             prompt, system_message, "json", model_purpose="recipe"
+        )
+
+    async def _ask_many(self, prompt: str, system_message: str):
+        # A meal type's recipes in one answer: room for every one of them,
+        # so the JSON is never cut off and lost whole.
+        return await self._generation.generate_meal_plan_async(
+            prompt,
+            system_message,
+            "json",
+            max_tokens=BATCH_MAX_TOKENS,
+            model_purpose="recipe",
         )
 
 
