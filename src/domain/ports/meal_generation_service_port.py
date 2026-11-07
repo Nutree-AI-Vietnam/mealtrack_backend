@@ -20,8 +20,12 @@ class MealGenerationServicePort(ABC):
         schema: type | None = None,
         model_purpose: str | None = None,
         thinking_budget: int | None = None,
+        request_timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         """Generate meal plan — runs on the caller's event loop.
+
+        ``request_timeout_seconds`` overrides the provider's per-request
+        timeout for a call that writes far more than a single answer.
 
         All callers must be async. Bridging sync→async via a blocking loop driver
         inside an already-running loop causes nesting bugs with async-bound

@@ -28,6 +28,11 @@ pytest tests/architecture -q
   or `python migrations/cli.py generate "<msg>"`.
 - Never hand-craft migration files, revision IDs, or filenames.
 - Every migration must implement a valid `downgrade()`.
+- A migration that changes a column type (or anything a `SELECT` returns)
+  must be applied with `migrate.yml` input `restart_compute: true`. The Neon
+  PgBouncer pooler keeps old prepared statements, so every query on that
+  table fails with `InvalidCachedStatementError` until the compute restarts;
+  redeploying the app does not clear it.
 
 **Calories = backend is source of truth**
 - Clients must not re-derive calories.

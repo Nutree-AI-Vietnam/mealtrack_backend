@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy import func, select, text, update
 
 from src.domain.exceptions.ai_job_exceptions import (
+    AiJobAdmissionBusyError,
     AiJobConflictError,
     AiJobNotFoundError,
     AiJobNotRetryableError,
@@ -26,7 +27,10 @@ from src.domain.model.notification import DeviceType
 from src.infra.database.models.ai_job import AiJobORM
 from src.infra.database.models.notification.user_fcm_token import UserFcmTokenORM
 from src.infra.database.models.user.user import User
-from src.infra.repositories.ai_job_repository import AsyncAiJobRepository
+from src.infra.repositories.ai_job_repository import (
+    _ADMISSION_LOCK_KEY,
+    AsyncAiJobRepository,
+)
 from src.infra.repositories.push_token_repository import AsyncPushTokenRepository
 
 pytestmark = pytest.mark.integration
@@ -205,6 +209,27 @@ async def test_claim_complete_and_capacity(pg_session, async_session_factory):
 
     next_claim = await _claim(async_session_factory, capacity=1)
     assert next_claim is not None and next_claim.id == second.id
+
+
+@pytest.mark.asyncio
+async def test_a_claim_steps_back_while_another_worker_is_admitting(
+    pg_session, async_session_factory
+):
+    """Busy admission raises at once instead of queueing on the lock."""
+    user_id = await _user(pg_session)
+    job = await _enqueue(async_session_factory, user_id)
+
+    async with async_session_factory() as holder:
+        await holder.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"), {"key": _ADMISSION_LOCK_KEY}
+        )
+        with pytest.raises(AiJobAdmissionBusyError):
+            await asyncio.wait_for(_claim(async_session_factory), timeout=5)
+        await holder.rollback()
+
+    # The lock is free again, and the job was never touched while it was held.
+    claim = await _claim(async_session_factory)
+    assert claim is not None and claim.id == job.id and claim.attempts == 1
 
 
 @pytest.mark.asyncio
@@ -721,7 +746,15 @@ async def test_concurrent_workers_never_claim_the_same_job(
     user_id = await _user(pg_session)
     jobs = [await _enqueue(async_session_factory, user_id) for _ in range(3)]
 
-    claims = await asyncio.gather(*(_claim(async_session_factory) for _ in range(5)))
+    async def claim_like_a_lane():
+        # A lane that finds admission busy looks again, as the worker does.
+        while True:
+            try:
+                return await _claim(async_session_factory)
+            except AiJobAdmissionBusyError:
+                await asyncio.sleep(0.01)
+
+    claims = await asyncio.gather(*(claim_like_a_lane() for _ in range(5)))
 
     claimed = [claim.id for claim in claims if claim is not None]
     assert sorted(claimed) == sorted(job.id for job in jobs)

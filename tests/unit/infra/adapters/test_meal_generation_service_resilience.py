@@ -53,3 +53,16 @@ async def test_discovery_model_purpose_maps_to_enum(service, mock_ai_manager):
 
     call_kwargs = mock_ai_manager.generate.call_args[1]
     assert call_kwargs["purpose"].value == "discovery"
+
+
+@pytest.mark.asyncio
+async def test_a_request_timeout_reaches_the_provider_only_when_asked_for(
+    service, mock_ai_manager
+):
+    await service.generate_meal_plan_async(
+        "prompt", "system", "json", model_purpose="recipe", request_timeout_seconds=90
+    )
+    assert mock_ai_manager.generate.await_args.kwargs["request_timeout_seconds"] == 90
+
+    await service.generate_meal_plan_async("prompt", "system", "json")
+    assert "request_timeout_seconds" not in mock_ai_manager.generate.await_args.kwargs

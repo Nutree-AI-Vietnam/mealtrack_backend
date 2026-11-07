@@ -396,3 +396,78 @@ class TestWhatABreakfastIs:
         assert VIETNAM.slot_note(0)
         assert VIETNAM.slot_note(1) == ""
         assert VIETNAM.slot_note(2) == ""
+
+
+class TestWhichModelWritesADish:
+    @pytest.mark.asyncio
+    async def test_a_dish_is_asked_for_as_a_recipe(self):
+        calls = []
+
+        class _Generation:
+            async def generate_meal_plan_async(self, *args, **kwargs):
+                calls.append((args, kwargs))
+                return {}
+
+        handler = WriteWeeklyPlanDishesCommandHandler(
+            uow_factory=None, generation_service=_Generation()
+        )
+
+        await handler._ask("prompt", "system")
+
+        assert calls[0][1]["model_purpose"] == "recipe"
+
+    @pytest.mark.asyncio
+    async def test_a_meal_type_s_recipes_are_asked_for_as_recipes_with_room(self):
+        calls = []
+
+        class _Generation:
+            async def generate_meal_plan_async(self, *args, **kwargs):
+                calls.append(kwargs)
+                return {}
+
+        handler = WriteWeeklyPlanDishesCommandHandler(
+            uow_factory=None, generation_service=_Generation()
+        )
+
+        await handler._ask_many("prompt", "system")
+
+        assert calls[0]["model_purpose"] == "recipe"
+        assert calls[0]["max_tokens"] >= 8_000
+
+    @pytest.mark.asyncio
+    async def test_a_batch_gets_a_long_request_timeout(self):
+        calls = []
+
+        class _Generation:
+            async def generate_meal_plan_async(self, *args, **kwargs):
+                calls.append(kwargs)
+                return {}
+
+        handler = WriteWeeklyPlanDishesCommandHandler(
+            uow_factory=None, generation_service=_Generation()
+        )
+
+        await handler._ask_many("prompt", "system")
+
+        # The shared client's 20s is sized for one scan, not seven recipes.
+        assert calls[0]["request_timeout_seconds"] >= 60
+
+    @pytest.mark.asyncio
+    async def test_a_batch_past_its_deadline_gives_up(self, monkeypatch):
+        """Every fallback included, a batch never eats the week's deadline."""
+        from src.app.handlers.command_handlers.meal_planner import (
+            write_weekly_plan_dishes_handler as module,
+        )
+
+        monkeypatch.setattr(module, "BATCH_DEADLINE_SECONDS", 0.01)
+
+        class _Generation:
+            async def generate_meal_plan_async(self, *args, **kwargs):
+                await asyncio.sleep(5)
+
+        handler = WriteWeeklyPlanDishesCommandHandler(
+            uow_factory=None, generation_service=_Generation()
+        )
+
+        with pytest.raises(TimeoutError):
+            await handler._ask_many("prompt", "system")
