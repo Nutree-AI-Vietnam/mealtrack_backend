@@ -10,15 +10,14 @@ env:
 jobs:
   unit-tests:
     name: 🧪 Unit Tests
-    # 3.13.2 has no setup-python build for Ubuntu 26.04 (ubuntu-latest).
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.13.2'
+          python-version: '3.13.18'
           cache: 'pip'
 
       - name: Install dependencies

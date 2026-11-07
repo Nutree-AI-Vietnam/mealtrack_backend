@@ -12,13 +12,12 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  PYTHON_VERSION: "3.13.2"
+  PYTHON_VERSION: "3.13.18"
 
 jobs:
   test:
     name: 🧪 Test
-    # 3.13.2 has no setup-python build for Ubuntu 26.04 (ubuntu-latest).
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
       - name: 📥 Checkout
@@ -94,8 +93,7 @@ jobs:
 
   postgres-integration:
     name: 🐘 PostgreSQL Integration
-    # 3.13.2 has no setup-python build for Ubuntu 26.04 (ubuntu-latest).
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     services:
       postgres:

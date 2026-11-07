@@ -25,11 +25,10 @@ permissions:
 jobs:
   migrate:
     name: Migrate (${{ inputs.environment }})
-    # 3.13.2 has no setup-python build for Ubuntu 26.04 (ubuntu-latest).
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     env:
-      PYTHON_VERSION: "3.13.2"
+      PYTHON_VERSION: "3.13.18"
       DATABASE_URL_DIRECT: ${{ secrets.DATABASE_URL_DIRECT }}
 
     steps:
