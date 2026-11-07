@@ -75,6 +75,17 @@ def ensure_utc(dt: datetime | None) -> datetime | None:
     return dt.astimezone(UTC)
 
 
+def wall_time_to_utc(dt: datetime, timezone_str: str) -> datetime:
+    """A client time in UTC, reading one without an offset in the user's zone.
+
+    Older app builds send the phone's wall clock with no offset. Read as UTC,
+    that lands hours away from the moment it names.
+    """
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=get_zone_info(timezone_str))
+    return dt.astimezone(UTC)
+
+
 # Default timezone
 DEFAULT_TIMEZONE = "UTC"
 
