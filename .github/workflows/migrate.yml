@@ -18,6 +18,16 @@ on:
         required: false
         type: boolean
         default: false
+      restart_compute:
+        description: >-
+          Restart the Neon compute after upgrading (~5-15s of DB downtime).
+          Required when a migration changes a column type or what a SELECT
+          returns: the Neon PgBouncer pooler keeps old prepared statements
+          and every query on that table fails with InvalidCachedStatementError
+          until its server connections close. Redeploying the app does not fix it.
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -60,6 +70,26 @@ jobs:
       - name: ⏩ Apply migrations
         if: ${{ !inputs.dry_run }}
         run: python migrations/run.py
+
+      - name: 🔄 Restart Neon compute (drop stale pooler prepared statements)
+        if: ${{ !inputs.dry_run && inputs.restart_compute }}
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+          NEON_ENDPOINT_ID: ${{ vars.NEON_ENDPOINT_ID }}
+        run: |
+          for name in NEON_API_KEY NEON_PROJECT_ID NEON_ENDPOINT_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::${name} is empty. Set it on the GitHub Environment '${{ inputs.environment }}' (NEON_API_KEY as a secret, the IDs as variables)."
+              exit 1
+            fi
+          done
+          curl --fail-with-body -sS -X POST \
+            -H "Authorization: Bearer ${NEON_API_KEY}" \
+            -H "Accept: application/json" \
+            "https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/endpoints/${NEON_ENDPOINT_ID}/restart" \
+            -o /dev/null
+          echo "Restarted Neon endpoint ${NEON_ENDPOINT_ID}"
 
       - name: 📊 Summary
         if: always()
