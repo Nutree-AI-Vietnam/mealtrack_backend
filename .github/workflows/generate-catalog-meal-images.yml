@@ -45,7 +45,8 @@ env:
 jobs:
   generate:
     name: Generate Missing Catalog Meal Images (${{ inputs.environment }})
-    runs-on: ubuntu-latest
+    # 3.13.2 has no setup-python build for Ubuntu 26.04 (ubuntu-latest).
+    runs-on: ubuntu-24.04
     environment: ${{ inputs.environment }}
     permissions:
       contents: read

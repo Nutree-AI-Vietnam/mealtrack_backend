@@ -10,7 +10,8 @@ env:
 jobs:
   unit-tests:
     name: 🧪 Unit Tests
-    runs-on: ubuntu-latest
+    # 3.13.2 has no setup-python build for Ubuntu 26.04 (ubuntu-latest).
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
