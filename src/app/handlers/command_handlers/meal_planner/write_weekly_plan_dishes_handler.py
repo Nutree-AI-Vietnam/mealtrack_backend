@@ -99,6 +99,16 @@ class WriteWeeklyPlanDishesCommandHandler(EventHandler):
             photos.cancel()
             raise
 
+        # Why dishes were turned away, every week: a week that came back with
+        # seven of twenty-one slots filled said nothing about which check
+        # emptied the other fourteen.
+        logger.info(
+            "Weekly plan %s written: %d dishes, %d unfilled, rejected %s",
+            command.plan_id,
+            len(week.dishes),
+            len(week.unfilled),
+            week.rejection_counts(),
+        )
         if not week.dishes:
             photos.cancel()
             logger.error(

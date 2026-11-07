@@ -50,7 +50,10 @@ SOURCE_PLANNER_AI = "planner_ai"
 MIN_DISH_KCAL = 80.0
 MAX_DISH_KCAL = 1_600.0
 MIN_DISH_INGREDIENTS = 2
-MIN_DISH_STEPS = 1
+# The prompt asks for 2-6 steps. Of 877 dishes the planner kept in one day
+# on production, 618 were a single step - "Luộc sườn heo cho đến khi chín kỹ"
+# was the whole of a grilled-rib rice plate - which is a name, not a recipe.
+MIN_DISH_STEPS = 2
 # How far a dish may land from what its own slot asked for. The absolute
 # bounds above say "this is food"; they say nothing about whether it is
 # this meal. A real week priced 1,580 kcal into a slot asking for 675 and
@@ -132,8 +135,10 @@ def review_ai_dish(
         reasons.append("ALREADY_IN_THE_WEEK")
     if len(snapshot.ingredients) < MIN_DISH_INGREDIENTS:
         reasons.append("TOO_FEW_INGREDIENTS")
-    if len(snapshot.steps) < MIN_DISH_STEPS:
+    if not snapshot.steps:
         reasons.append("NO_STEPS")
+    elif len(snapshot.steps) < MIN_DISH_STEPS:
+        reasons.append("TOO_FEW_STEPS")
 
     kcal = float(snapshot.calories)
     if not MIN_DISH_KCAL <= kcal <= MAX_DISH_KCAL:
@@ -651,6 +656,22 @@ class WeekOfDishes:
     dishes: dict[tuple[int, int], SavedRecipeSnapshot]
     rejected: tuple[RejectedDish, ...] = ()
     unfilled: tuple[tuple[int, int], ...] = ()
+
+    def rejection_counts(self) -> dict[str, int]:
+        """How often each reason turned a dish away, most frequent first.
+
+        A reason that carries a measurement - OFF_TARGET_CALORIES_134PCT,
+        SAME_PROTEIN_TODAY_CHICKEN - is counted under its kind, so a week's
+        counts can be added up across weeks.
+        """
+        counts: dict[str, int] = {}
+        for dish in self.rejected:
+            for reason in dish.reasons:
+                kind = next(
+                    (soft for soft in SOFT_REASONS if reason.startswith(soft)), reason
+                )
+                counts[kind] = counts.get(kind, 0) + 1
+        return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
 
 
 def reference_block(names: tuple[str, ...]) -> str:

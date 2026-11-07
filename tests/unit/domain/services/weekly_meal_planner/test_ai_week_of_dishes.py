@@ -53,7 +53,10 @@ def _recipe(name, *, protein=25.0, steps=None, extra_line=True):
         "prep_time_minutes": 20,
         "ingredients": lines,
         "recipe_steps": steps
-        or [{"instruction": "Grill for 12 minutes until cooked through."}],
+        or [
+            {"instruction": "Season the chicken and steam the greens."},
+            {"instruction": "Grill for 12 minutes until cooked through."},
+        ],
     }
 
 
@@ -283,7 +286,10 @@ class TestTheLanguageTheWeekIsWrittenIn:
                         "carbs": 45,
                     },
                 ],
-                "recipe_steps": [{"instruction": "Nấu cơm."}],
+                "recipe_steps": [
+                    {"instruction": "Prepare the ingredients."},
+                    {"instruction": "Nấu cơm."},
+                ],
             },
             dish_id="ai-1",
             language="vi",
@@ -381,7 +387,10 @@ class TestTheKitchenRules:
                     {"name": "bok choy", "amount": 200, "unit": "g", "carbs": 4},
                     {"name": "cooking oil", "amount": 10, "unit": "g", "fat": 10},
                 ],
-                "recipe_steps": [{"instruction": "Stir-fry until just wilted."}],
+                "recipe_steps": [
+                    {"instruction": "Prepare the ingredients."},
+                    {"instruction": "Stir-fry until just wilted."},
+                ],
             },
             dish_id="ai-1",
         )
@@ -411,7 +420,10 @@ class TestADishThatNamesItself:
                         "protein": 30,
                     },
                 ],
-                "recipe_steps": [{"instruction": "Luộc gà rồi xé nhỏ."}],
+                "recipe_steps": [
+                    {"instruction": "Prepare the ingredients."},
+                    {"instruction": "Luộc gà rồi xé nhỏ."},
+                ],
             },
             dish_id="ai-1",
         )
@@ -538,7 +550,10 @@ class TestTheNameTheWeekKeeps:
                     {"name": "jasmine rice", "amount": 150, "unit": "g", "carbs": 45},
                     {"name": "chicken", "amount": 120, "unit": "g", "protein": 30},
                 ],
-                "recipe_steps": [{"instruction": "Nướng gà cho chín vàng."}],
+                "recipe_steps": [
+                    {"instruction": "Prepare the ingredients."},
+                    {"instruction": "Nướng gà cho chín vàng."},
+                ],
             },
             dish_id="ai-1",
             language="vi",
@@ -558,7 +573,10 @@ class TestTheNameTheWeekKeeps:
                     {"name": "jasmine rice", "amount": 150, "unit": "g", "carbs": 45},
                     {"name": "chicken", "amount": 120, "unit": "g", "protein": 30},
                 ],
-                "recipe_steps": [{"instruction": "Grill the chicken."}],
+                "recipe_steps": [
+                    {"instruction": "Prepare the ingredients."},
+                    {"instruction": "Grill the chicken."},
+                ],
             },
             dish_id="ai-1",
             language="vi",
@@ -630,7 +648,10 @@ class TestTwiceTheSameProteinInOneDay:
                         "protein": 38,
                     },
                 ],
-                "recipe_steps": [{"instruction": "Nấu cơm."}],
+                "recipe_steps": [
+                    {"instruction": "Prepare the ingredients."},
+                    {"instruction": "Nấu cơm."},
+                ],
             },
             dish_id="ai-1",
         )
@@ -651,7 +672,10 @@ class TestTwiceTheSameProteinInOneDay:
                         {"name": cut, "amount": 150, "unit": "g", "protein": 38},
                         {"name": "carrot", "amount": 60, "unit": "g", "carbs": 6},
                     ],
-                    "recipe_steps": [{"instruction": "Nấu."}],
+                    "recipe_steps": [
+                        {"instruction": "Prepare the ingredients."},
+                        {"instruction": "Nấu."},
+                    ],
                 },
                 dish_id="ai-1",
             )
@@ -673,7 +697,10 @@ class TestTwiceTheSameProteinInOneDay:
                     {"name": "bok choy", "amount": 200, "unit": "g", "carbs": 4},
                     {"name": "carrot", "amount": 60, "unit": "g", "carbs": 6},
                 ],
-                "recipe_steps": [{"instruction": "Luộc rau."}],
+                "recipe_steps": [
+                    {"instruction": "Prepare the ingredients."},
+                    {"instruction": "Luộc rau."},
+                ],
             },
             dish_id="ai-1",
         )
@@ -739,7 +766,10 @@ class TestTwiceTheSameProteinInOneDay:
                     "fat": 10,
                 },
             ],
-            "recipe_steps": [{"instruction": "Nấu chín kỹ rồi dọn ra."}],
+            "recipe_steps": [
+                {"instruction": "Prepare the ingredients."},
+                {"instruction": "Nấu chín kỹ rồi dọn ra."},
+            ],
         }
 
     @pytest.mark.asyncio
@@ -1229,7 +1259,10 @@ class TestADishThatIsFoodButNotThisMeal:
                     {"name": "chicken", "amount": 150, "unit": "g", "protein": protein},
                     {"name": "rice", "amount": 200, "unit": "g", "carbs": carbs},
                 ],
-                "recipe_steps": [{"instruction": "Nấu chín kỹ."}],
+                "recipe_steps": [
+                    {"instruction": "Prepare the ingredients."},
+                    {"instruction": "Nấu chín kỹ."},
+                ],
             },
             dish_id="ai-1",
         )
@@ -1328,7 +1361,10 @@ class TestWhenOurOwnPricingIsDown:
                     {"name": "chicken", "amount": 150, "unit": "g"},
                     {"name": "rice", "amount": 200, "unit": "g"},
                 ],
-                "recipe_steps": [{"instruction": "Nấu chín kỹ."}],
+                "recipe_steps": [
+                    {"instruction": "Prepare the ingredients."},
+                    {"instruction": "Nấu chín kỹ."},
+                ],
             },
             dish_id="ai-1",
         )
@@ -1399,7 +1435,10 @@ class TestSoftAndHardNo:
                 {"name": "chicken", "amount": grams / 2, "unit": "g", "protein": half},
                 {"name": "rice", "amount": grams / 2, "unit": "g", "carbs": half},
             ],
-            "recipe_steps": [{"instruction": "Nấu chín kỹ rồi dọn ra."}],
+            "recipe_steps": [
+                {"instruction": "Prepare the ingredients."},
+                {"instruction": "Nấu chín kỹ rồi dọn ra."},
+            ],
         }
 
     @pytest.mark.asyncio
@@ -1449,7 +1488,10 @@ class TestSoftAndHardNo:
                         {"name": "beef", "amount": 150, "unit": "g", "protein": 75},
                         {"name": "rice", "amount": 200, "unit": "g", "carbs": 75},
                     ],
-                    "recipe_steps": [{"instruction": "Thái bò tái rồi dọn ra."}],
+                    "recipe_steps": [
+                        {"instruction": "Prepare the ingredients."},
+                        {"instruction": "Thái bò tái rồi dọn ra."},
+                    ],
                 }
             },
         )
@@ -1644,3 +1686,27 @@ async def test_a_later_meal_type_s_batch_knows_what_each_day_already_eats():
     lunch = model.batch_prompts[1].split("=== DISH ")[1]
     assert "Earlier today this person eats" not in breakfast
     assert "Earlier today this person eats: Beef pho" in lunch
+
+
+def test_a_week_counts_why_its_dishes_were_turned_away():
+    from src.domain.services.weekly_meal_planner.ai_dish import (
+        RejectedDish,
+        WeekOfDishes,
+    )
+
+    week = WeekOfDishes(
+        dishes={},
+        rejected=(
+            RejectedDish("a", ("OFF_TARGET_CALORIES_134PCT", "TOO_FEW_STEPS")),
+            RejectedDish("b", ("OFF_TARGET_CALORIES_70PCT",)),
+            RejectedDish("c", ("SAME_PROTEIN_TODAY_CHICKEN",)),
+            RejectedDish("d", ("recipe serves food raw or rare",)),
+        ),
+    )
+
+    assert week.rejection_counts() == {
+        "OFF_TARGET_CALORIES": 2,
+        "SAME_PROTEIN_TODAY": 1,
+        "TOO_FEW_STEPS": 1,
+        "recipe serves food raw or rare": 1,
+    }

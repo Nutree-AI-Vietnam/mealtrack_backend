@@ -163,6 +163,17 @@ class TestWhatMayTakeASlot:
 
         assert "NO_STEPS" in review_ai_dish(snapshot)
 
+    def test_a_one_line_recipe_is_refused(self):
+        """A grilled-rib plate whose whole recipe was 'boil the ribs'."""
+        snapshot = snapshot_from_ai_recipe(
+            _payload(recipe_steps=["Luộc sườn heo cho đến khi chín kỹ."]),
+            dish_id="ai-1",
+        )
+
+        reasons = review_ai_dish(snapshot)
+        assert "TOO_FEW_STEPS" in reasons
+        assert "NO_STEPS" not in reasons
+
     def test_a_plate_nobody_could_eat_is_refused(self):
         snapshot = snapshot_from_ai_recipe(
             _payload(

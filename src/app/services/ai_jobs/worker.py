@@ -38,7 +38,10 @@ from src.app.services.ai_jobs.supervision import (
     run_detached,
     supervise_attempt,
 )
-from src.domain.exceptions.ai_job_exceptions import AiJobExecutionError
+from src.domain.exceptions.ai_job_exceptions import (
+    AiJobAdmissionBusyError,
+    AiJobExecutionError,
+)
 from src.domain.model.ai_jobs import AiJobClaim, AiJobType
 from src.domain.model.ai_jobs.policies import classify_ai_job_error
 from src.observability import distribution_metric
@@ -51,6 +54,16 @@ INTERRUPTIBLE_AI_JOB_TYPES = frozenset(
 )
 _INTERRUPT_GRACE_SECONDS = 5.0
 _CLEANUP_TIMEOUT_SECONDS = 5.0
+# A lane that found admission busy looks again after this long. Spread over a
+# range so lanes that collided do not collide again on the same tick.
+_BUSY_RETRY_MIN_SECONDS = 0.05
+_BUSY_RETRY_MAX_SECONDS = 0.25
+
+
+def _busy_retry_seconds(draw: float) -> float:
+    """How long a lane waits after finding admission busy, for a draw in [0, 1)."""
+    span = _BUSY_RETRY_MAX_SECONDS - _BUSY_RETRY_MIN_SECONDS
+    return _BUSY_RETRY_MIN_SECONDS + span * min(max(draw, 0.0), 1.0)
 
 
 class AiJobWorker:
@@ -83,6 +96,7 @@ class AiJobWorker:
             rng=rng,
         )
         self._ready = ready or _always_ready
+        self._rng = rng
         self._executors = dict(executors)
         # Claim only what this worker can run (see claim_next).
         self._job_types = frozenset(self._executors)
@@ -124,6 +138,12 @@ class AiJobWorker:
             try:
                 if await self._ready():
                     worked = await self.run_once(stop)
+            except AiJobAdmissionBusyError:
+                # Another lane is mid-claim. It holds the lock for a few
+                # milliseconds, so look again almost at once - and without
+                # growing the idle backoff, since a job may well be waiting.
+                await asyncio.sleep(_busy_retry_seconds(self._rng()))
+                continue
             except Exception:
                 logger.exception("AI job lane %s failed to claim or run a job", index)
             if worked:
