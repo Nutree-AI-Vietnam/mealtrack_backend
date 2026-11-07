@@ -700,6 +700,17 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
 
         await CatalogProjectionRebuilder(self._session).rebuild(result.scalars().all())
 
+    async def count_by_source_since(self, source_name: str, since: datetime) -> int:
+        result = await self._execute_catalog(
+            select(func.count())
+            .select_from(MealCatalogORM)
+            .where(
+                MealCatalogORM.source_name == source_name,
+                MealCatalogORM.created_at >= since,
+            )
+        )
+        return int(result.scalar_one())
+
     async def lock_seed_import(self) -> None:
         await self._execute_catalog(
             select(
